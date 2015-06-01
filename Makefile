@@ -1,2 +1,2 @@
 all:
-	docker build -t jramon76/cc .
+	docker build -t jramon76/ccc .
