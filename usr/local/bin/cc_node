@@ -32,7 +32,7 @@ Options:
 	-i ip/prefix  		Specify the node ip address and network prefix
         -h hostname   		Specify the node hostname. Defaults to the mac address prefixed by 'coreos-'
 	-c channel:version	Specify the coreos version to use, defaults to stable:current
-	-d true|false           Specify if this node will be using a "disk" partition (when true), labeled as "CCROOT", 
+	-d true|false           Specify if this node will be using a "disk" partition (when true), labeled as "CCCROOT", 
                                 for the root filesystem, or the default "tmpfs" in RAM (when false)
 	-a true|false		Specify this node requires console autologin
 	-s			Show node data. If new data is being set, then show them after new settings.
@@ -328,7 +328,7 @@ function node_reconfigure() {
 
 cat>"$tmp_file"<<EEOOFF
 default amd64-usr/$node_channel/$node_version/coreos_production_pxe.vmlinuz
-append initrd=$(if test -e "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/coreos_production_pxe_image.cpio.gz"; then echo "pxelinux.cfg/$CC_ARPTYPE-$node_macaddr.data"; else echo "amd64-usr/$node_channel/$node_version"; fi)/coreos_production_pxe_image.cpio.gz $(test "true" = "$node_autologin" && echo "coreos.autologin") $(test "true" = "$node_usedisk" && echo "root=LABEL=CCROOT") sshkey="$CC_SERVERKEY"
+append initrd=$(if test -e "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/coreos_production_pxe_image.cpio.gz"; then echo "pxelinux.cfg/$CC_ARPTYPE-$node_macaddr.data"; else echo "amd64-usr/$node_channel/$node_version"; fi)/coreos_production_pxe_image.cpio.gz $(test "true" = "$node_autologin" && echo "coreos.autologin") $(test "true" = "$node_usedisk" && echo "root=LABEL=CCCROOT") sshkey="$CC_SERVERKEY"
 EEOOFF
 
   test $? -eq 0 || { echo "failed to create '$tmp_file'" 1>&2; rm -f "$tmp_file"; return 1; }
