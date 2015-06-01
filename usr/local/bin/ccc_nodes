@@ -1,11 +1,11 @@
 #!/bin/bash
 
-sourceconfig=/etc/sysconfig/cc
+sourceconfig=/etc/sysconfig/ccc
 
 source $sourceconfig
 
-test -z "$CC_NODESDIR" && { echo "missing config parameter CC_NODESDIR from $sourceconfig" 1>&2; exit 1; }
-test -z "$CC_PXEDIR" && { echo "missing config parameter CC_PXEDIR from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_NODESDIR" && { echo "missing config parameter CCC_NODESDIR from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_PXEDIR" && { echo "missing config parameter CCC_PXEDIR from $sourceconfig" 1>&2; exit 1; }
 
 
 USAGE="usage: $0 [OPTIONS]
@@ -38,36 +38,36 @@ then
 	test $# -eq 1 || { echo "$USAGE"; exit 2; }
 
 	# disable nodes that are not in the current server subnet or has invalid data
-	find "$CC_NODESDIR" -name "??-??-??-??-??-??" | while read c
+	find "$CCC_NODESDIR" -name "??-??-??-??-??-??" | while read c
 	do
 	  node_macaddr=${c##*/}
           if { echo "$node_macaddr" | grep -P '^([0-9a-f]{2}-){5}[0-9a-f]{2}$' &>/dev/null; }
           then
-                cc_node "$node_macaddr" -v 2>/dev/null || { /bin/mv "$c" "$c.disabled"; cc_node "$node_macaddr" -e; } 
+                ccc_node "$node_macaddr" -v 2>/dev/null || { /bin/mv "$c" "$c.disabled"; ccc_node "$node_macaddr" -e; } 
           fi
 	done
 
 	# find hanging files and folders in pxelinux.cfg for not registered nodes
 	# and remove those
 
-	find "$CC_PXEDIR" -name "??-??-??-??-??-??-??" | while read c
+	find "$CCC_PXEDIR" -name "??-??-??-??-??-??-??" | while read c
 	do
 	  mac=${c##*/}
           mac=${mac#*-}
-          test -e "$CC_NODESDIR/$mac" || /bin/rm -rf "$c"
+          test -e "$CCC_NODESDIR/$mac" || /bin/rm -rf "$c"
 	done
 
-	find "$CC_PXEDIR" -name "??-??-??-??-??-??-??.data" | while read c
+	find "$CCC_PXEDIR" -name "??-??-??-??-??-??-??.data" | while read c
 	do
 	  mac=${c##*/}
           mac=${mac#*-}
-          test -e "$CC_NODESDIR/$mac" || /bin/rm -rf "$c"
+          test -e "$CCC_NODESDIR/$mac" || /bin/rm -rf "$c"
 	done
 
 	# clean all tmp files
-	/bin/rm -rf "$CC_NODESDIR"/.cc.tmp.* "$CC_PXEDIR"/.cc.tmp.* "$CC_PXEDIR"/.cc.tmp.* /tmp/.cc.tmp.*
+	/bin/rm -rf "$CCC_NODESDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* /tmp/.ccc.tmp.*
 
-	touch "$CC_DIR/reconfigure"
+	touch "$CCC_DIR/reconfigure"
 
 	exit 0
 fi # cleanup end
@@ -91,14 +91,14 @@ then
 fi
 
 # printing and reconfiguring:
-cd "$CC_NODESDIR" && find . -name "??-??-??-??-??-??" | while read m
+cd "$CCC_NODESDIR" && find . -name "??-??-??-??-??-??" | while read m
 do
 
  node_macaddr="${m#./}"
 
  if test -n "$nodes_tab"
  then
-	 output=$(cc_node "$node_macaddr" -s)
+	 output=$(ccc_node "$node_macaddr" -s)
 	 echo -n "$node_macaddr: $(echo "$output"|grep ^node_ipdata| cut -d= -f2)"
 	 echo -n " $(echo "$output"|grep ^node_hostname| cut -d= -f2)"
 	 echo -n " $(echo "$output"|grep ^node_coreosversion| cut -d= -f2)"
@@ -123,7 +123,7 @@ do
 	 fi
 	 echo
  else
-	 cc_node "$node_macaddr" -V $nodes_reconfigure $nodes_verbose 2>/dev/null
+	 ccc_node "$node_macaddr" -V $nodes_reconfigure $nodes_verbose 2>/dev/null
 	 test -n "$nodes_verbose" && echo 
  fi
 
