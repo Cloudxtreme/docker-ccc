@@ -1,0 +1,418 @@
+#!/bin/bash
+
+which ipcalc &>/dev/null || { echo "executable 'ipcalc' not found in PATH" 1>&2; exit 10; }
+which uuid &>/dev/null || { echo "executable 'uuid' not found in PATH" 1>&2; exit 10; }
+
+sourceconfig=/etc/sysconfig/cc
+source "$sourceconfig"
+
+test -z "$CC_NODESDIR" && { echo "missing config parameter CC_NODESDIR from $sourceconfig" 1>&2; exit 10; }
+test -z "$CC_PXEDIR" && { echo "missing config parameter CC_PXEDIR from $sourceconfig" 1>&2; exit 10; }
+test -z "$CC_CACHEDIR" && { echo "missing config parameter CC_CACHEDIR from $sourceconfig" 1>&2; exit 1; }
+test -z "$CC_SERVERKEYFILE" && { echo "missing config parameter CC_SERVERKEYFILE from $sourceconfig" 1>&2; exit 1; }
+test -z "$CC_COREOS_VERSIONS" && { echo "missing config parameter CC_COREOS_VERSIONS from $sourceconfig" 1>&2; exit 1; }
+test -z "$CC_ARPTYPE" && { echo "missing config parameter CC_ARPTYPE from $sourceconfig" 1>&2; exit 1; }
+test -z "$CC_CLOUDINIT_TEMPLATE" && { echo "missing config parameter CC_CLOUDINIT_TEMPLATE from $sourceconfig" 1>&2; exit 1; }
+
+test -z "$CC_SERVERIP" && { echo "failed to extract CC_SERVERIP from $CC_SERVERIPDATA" 1>&2; exit 1; }
+test -z "$CC_SERVERPREFIX" && { echo "failed to extract CC_SERVERPREFIX from $CC_SERVERIPDATA" 1>&2; exit 1; }
+test -z "$CC_SERVERSUBNET" && { echo "failed to calculate CC_SERVERSUBNET from $CC_SERVERIPDATA" 1>&2; exit 1; }
+test -z "$CC_SERVERNETMASK" && { echo "failed to calculate CC_SERVERNETMASK from $CC_SERVERIPDATA" 1>&2; exit 1; }
+test -z "$CC_SERVERBCAST" && { echo "failed to calculate CC_SERVERBCAST from $CC_SERVERIPDATA" 1>&2; exit 1; }
+
+export node_dns="$CC_SERVERIP"
+export node_gateway="$CC_SERVERIP"
+
+USAGE="usage: $0 node_mac_addr [OPTIONS]
+
+	node_mac_addr  		Mandatory argument. Set to the coreos node MAC. Use the  format: XX-XX-XX-XX-XX-XX
+
+Options:
+	-n 			Specify that this is a new node being registered (so, also specify all non defaults)
+	-i ip/prefix  		Specify the node ip address and network prefix
+        -h hostname   		Specify the node hostname. Defaults to the mac address prefixed by 'coreos-'
+	-c channel:version	Specify the coreos version to use, defaults to stable:current
+	-d true|false           Specify if this node will be using a "disk" partition (when true), labeled as "CCROOT", 
+                                for the root filesystem, or the default "tmpfs" in RAM (when false)
+	-a true|false		Specify this node requires console autologin
+	-s			Show node data. If new data is being set, then show them after new settings.
+				If no data is changed then validation is not performed. Add -v in that case.
+	-v			Validate current node data even if no new settings are detected
+	-V			Same than -v but prints node mac address to stdin on successful validation.
+	-f 			Force a server side reconfiguration for this node
+				A server side reconfiguration is done anyway if any change is detected on node data
+	-e			Deregister the node (can't be used with other options)
+	-o			Use standard input data as cloud-init.yml configuration for node (instead of the default)
+				(can't be used with other options)
+	-O			Print the current cloud-init.yml of the node to standard output
+				(can't be used with other options)
+	-T			Same than -O but translates the referenced variables into values
+				(can't be used with other options)
+	-r [command]		Execute a remote command on this node (can't be used with other options), if no command 
+ 				is given then it will read all commands from STDIN. 
+				WARNING: Everything after '-r' will be considered as part of the command.
+
+If no option is provided, then it will exit with 0 if the mac is valid and the node is registered, in any other case 
+it will exit with non-zero. If mac is not valid it will print an error message.
+	
+"
+
+export node_macaddr=$1
+export converted_mac="$(convert_mac "$node_macaddr")"
+export node_mac="$converted_mac"
+
+if test -z "$node_macaddr"
+then
+	echo "node mac address not specified" 1>&2
+	test "${0##*/}" = "cc_node" && echo "$USAGE" 1>&2
+	exit 2 
+fi
+
+if ! { echo "$node_macaddr" | grep -P '^([0-9a-f]{2}-){5}[0-9a-f]{2}$'; } &>/dev/null
+then
+        echo "node mac address is invalid or has an incorrect syntax: $node_macaddr" 1>&2
+	test "${0##*/}" = "cc_node" && echo "$USAGE" 1>&2
+        exit 2
+fi
+	
+test -e "$CC_NODESDIR/$node_macaddr"
+node_is_registered=$?    # 0: registered, 1: not registered
+
+# if no option provided then just check if node is registered and exit with proper code
+if test $# -eq 1 && test -n "$node_deregister"
+then
+	exit $node_is_registered
+fi
+
+function showdata() {
+	test "$CC_NODESDIR/$node_macaddr" && grep -P '^#' "$CC_NODESDIR/$node_macaddr" | cut -d\# -f2-
+}
+
+# defaults
+export node_hostname=coreos-$node_macaddr
+export node_coreosversion=stable:current
+export node_autologin=false
+export node_usedisk=false
+
+# if node exists load its current data to override defaults
+if test $node_is_registered -eq 0
+then
+	tmp_file="/tmp/.cc.tmp.$node_macaddr.$(uuid)"
+	showdata >"$tmp_file" && source "$tmp_file"
+	/bin/rm -f "$tmp_file"
+fi
+
+# to start processing options
+shift
+
+# now set the new data passed as arguments
+while getopts "i:h:c:d:a:nevVsfroOT" OPTION
+do
+	case $OPTION in
+	     i) node_ipdata="$OPTARG" ;;
+	     h) node_hostname="$OPTARG" ;;
+	     c) node_coreosversion="$OPTARG" ;;
+	     d) node_usedisk="$OPTARG" ;;
+	     a) node_autologin="$OPTARG" ;;
+	     n) node_register=1 ;;
+	     e) node_deregister=1 ;;
+	     v) node_validate=1 ;;
+	     V) node_validate=2 ;;
+	     s) node_showdata=1 ;;
+	     f) node_reconfigure=1 ;;
+	     r) node_remotecmd=1 ;;
+	     o) node_cloudinit=1 ;;
+	     O) node_cloudinit_out=1 ;;
+	     T) node_cloudinit_out=2 ;;
+	     *) echo "$USAGE" 1>&2; exit 2 ;;
+	esac
+done
+
+# if there is a deregistration request
+if test -n "$node_deregister"
+then
+	# if its not the only option then exit
+	test $# -eq 1 || { echo "$USAGE" 1>&2; exit 2; }
+
+	{ test $node_is_registered -eq 0 && ! test -e "$CC_NODESDIR/$node_macaddr.disabled"; } || { echo "node is not registered but cleanup will continue" 1>&2; }
+	/bin/rm -rf "$CC_NODESDIR/$node_macaddr" "$CC_NODESDIR/$node_macaddr.disabled"
+	/bin/rm -rf "$CC_PXEDIR/"??"-$node_macaddr" "$CC_PXEDIR/"??"-$node_macaddr".data 
+	test -e "$CC_PXEDIR/"??"-$node_macaddr" && { echo "failed to properly deregister node: $node_macaddr" 1>&2; exit 11; }
+	test -e "$CC_NODESDIR/$node_macaddr" && { echo "failed to deregister node: $node_macaddr" 1>&2; exit 1; }
+	
+	touch "$CC_DIR/reconfigure"
+
+	exit $?
+fi
+
+# if there is a cloud-init config in/out request and no the only option
+if { test -n "$node_cloudinit" || test -n "$node_cloudinit_out"; } && test $# -ne 1
+then
+	echo "$USAGE" 1>&2
+	exit 2
+fi
+
+# check required non defaults:
+
+# if registering node then ip/prefix is required
+if test -n "$node_register" && test -z "$node_ipdata"
+then
+	echo "node ip/prefix not specified" 1>&2
+	exit 2
+fi
+
+# if not registering then node must exist
+if test -z "$node_register" && test "$node_is_registered" -ne 0
+then
+	echo "node is not registered: $node_macaddr" 1>&2
+	exit 2
+fi
+
+# if registering then node must not exist
+if test -n "$node_register" && test "$node_is_registered" -ne 1
+then
+	echo "node is already registered (remove '-n' option to update): $node_macaddr" 1>&2
+	exit 2
+fi
+
+# if remote execution request then everything after the option is the command
+if test -n "$node_remotecmd"
+then
+	shift # to remove mac address
+	shift # to remove option
+
+	# if no command passed as arg then read from stdin
+	if test $# -eq 0
+	then
+
+	  tmpscript=".cc.tmp.cmd.$(uuid)"
+
+	  sshopts="-i $cc_serverkeyfile -o StrictHostKeyChecking=no core@$node_ip"
+
+	  { ssh $sshopts cat\>"$tmpscript" && \
+	    ssh $sshopts chmod +x "./$tmpscript" && \
+	    ssh $sshopts "./$tmpscript"; } || { echo "failed execution of remote command";  exit 1; }
+
+	  ssh $sshopts /bin/rm -rf "./$tmpscript" || { echo "failed to remove temporary remote file: $tmpscript";  exit 1; }
+
+	  exit $?
+
+	else # use the command specified
+
+          ssh -i "$cc_serverkeyfile" -o 'StrictHostKeyChecking=no' core@$node_ip $*
+
+	  exit $?
+
+	fi
+	
+	exit 0
+fi
+
+export node_ipdata
+export node_ip=${node_ipdata%/*}
+export node_ipprefix=${node_ipdata##*/}
+export node_channel=${node_coreosversion%:*}
+export node_version=${node_coreosversion##*:}
+
+if test "$node_version" = "current" || test -z "$node_version" || test "$node_version" = "$node_channel"
+then
+	node_version="$(find_latest $node_channel)"
+fi
+ 
+function validate_node_data() 
+{
+
+  if ! { echo "$node_ip/$node_ipprefix" | grep -P '^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$' &>/dev/null; }
+  then
+        echo "bad node ip/prefix: $node_ipdata" 1>&2
+        return 1
+  else
+        # check is valid and is on server subnet
+        ipcalc -c "$node_ip/$node_ipprefix" || return 1
+
+        if test "$(ipcalc -n $node_ip/$node_ipprefix)" != "NETWORK=$CC_SERVERSUBNET" || \
+           test "$(ipcalc -m $node_ip/$node_ipprefix)" != "NETMASK=$CC_SERVERNETMASK" || \
+           test "$(ipcalc -b $node_ip/$node_ipprefix)" != "BROADCAST=$CC_SERVERBCAST"
+        then
+                echo "node ip/prefix does not matches server configured network: $node_ip/$node_ipprefix vs server: $CC_SERVERIPDATA" 1>&2
+                return 1
+        fi
+  fi
+
+  if ! { echo "$node_hostname" | grep -P '^[a-zA-Z]+[\w-]*[a-zA-Z0-9]+$' &>/dev/null; }
+  then
+        echo "bad node hostname: $node_hostname" 1>&2
+        return 1
+  fi
+
+  if ! { echo "$node_channel" | grep -P '^(stable)|(beta)|(alpha)$' &>/dev/null; }
+  then
+        echo "bad node channel: $node_channel" 1>&2
+        return 1
+  fi
+
+  if ! { echo "$node_version" | grep -P '^(\d{3,4}\.\d{1,2}\.\d{1,2})$' &>/dev/null; }
+  then
+        echo "bad node version: $node_version" 1>&2
+        return 1
+  fi
+
+  if ! test -e "$CC_CACHEDIR/$node_channel/$node_version/$CC_COREOS_PXE_VMLINUZ"
+  then
+	echo "non existing vmlinuz image for: $node_channel:$node_version" 1>&2
+	return 1
+  fi
+
+  if ! test -e "$CC_CACHEDIR/$node_channel/$node_version/$CC_COREOS_PXE_IMAGE_CPIO"
+  then
+	echo "non existing cpio initrd for: $node_channel:$node_version" 1>&2
+	return 1
+  fi
+
+  if ! { echo "$node_autologin" | grep -P '^(true|false)$' &>/dev/null; }
+  then
+        echo "bad node autologin value (use 'true' or 'false'): $node_autologin" 1>&2
+        return 1
+  fi
+
+  if ! { echo "$node_usedisk" | grep -P '^(true|false)$' &>/dev/null; }
+  then
+        echo "bad node usedisk value (use 'true' or 'false'): $node_usedisk" 1>&2
+        return 1
+  fi
+
+  test "$node_validate" = "2" && echo "$node_macaddr"
+
+  return 0
+}
+
+function translated_file() {
+  origfile=$1
+  if ! test -s "$origfile"
+  then
+	origfile="$CC_CLOUDINIT_TEMPLATE"
+  fi
+
+  if test -e "$origfile"
+  then
+	cat "$origfile" | sed 's/^/#/' | while read x; do eval "echo \"${x#\#}\""; done
+  fi
+}
+
+function node_reconfigure() {
+  
+  touch "$CC_DIR/reconfigure"
+
+  echo "reconfiguring node..." 1>&2
+
+  tmp_file="$CC_PXEDIR/.cc.tmp.$CC_ARPTYPE-$node_macaddr.$(uuid)"
+
+    mkdir -p "$tmp_file"
+  
+    if cd "$tmp_file"
+    then
+	mkdir -p ./usr/share/oem
+	translated_file "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/cloud-init.yml" >"./usr/share/oem/cloud-init.yml" && \
+	cp "$CC_PXEDIR/../amd64-usr/$node_channel/$node_version/coreos_production_pxe_image.cpio.gz" . && \
+	gzip -d coreos_production_pxe_image.cpio.gz && \
+	{ find usr | cpio -o -A -H newc -O coreos_production_pxe_image.cpio 2>/dev/null; } && \
+	/bin/rm -rf ./usr coreos_production_pxe_image.cpio.gz && \
+	gzip coreos_production_pxe_image.cpio && \
+	mkdir -p "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/" && \
+	mv coreos_production_pxe_image.cpio.gz "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/"
+
+	test $? -eq 0 ||  { echo "failed to create oem initrd" 1>&2; rm -rf "$tmp_file"; return 1; }
+    fi
+
+    /bin/rm -rf "$tmp_file"
+
+cat>"$tmp_file"<<EEOOFF
+default amd64-usr/$node_channel/$node_version/coreos_production_pxe.vmlinuz
+append initrd=$(if test -e "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/coreos_production_pxe_image.cpio.gz"; then echo "pxelinux.cfg/$CC_ARPTYPE-$node_macaddr.data"; else echo "amd64-usr/$node_channel/$node_version"; fi)/coreos_production_pxe_image.cpio.gz $(test "true" = "$node_autologin" && echo "coreos.autologin") $(test "true" = "$node_usedisk" && echo "root=LABEL=CCROOT") sshkey="$CC_SERVERKEY"
+EEOOFF
+
+  test $? -eq 0 || { echo "failed to create '$tmp_file'" 1>&2; rm -f "$tmp_file"; return 1; }
+
+  if ! cmp "$tmp_file" "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr" &>/dev/null
+  then
+   /bin/mv "$tmp_file" "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr"
+   test $? -eq 0 || { echo "failed to create '$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr'" 1>&2; rm -f "$tmp_file" return 1; }
+  fi
+
+  /bin/rm -f "$tmp_file"
+
+  return $?
+}
+
+if test -n "$node_cloudinit"
+then
+        test $node_is_registered -eq 0 || { echo "node is not registered" 1>&2; exit 11; }
+
+        mkdir -p "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data"
+        cat > "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+
+	test -s "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/cloud-init.yml" || \
+		/bin/rm -f "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+fi
+
+if test -n "$node_cloudinit_out"
+then
+        test $node_is_registered -eq 0 || { echo "node is not registered" 1>&2; exit 11; }
+
+	if test "2" = "$node_cloudinit_out"
+	then
+		translated_file "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+	elif test -s "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+	then
+		cat "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+	else
+		cat "$CC_CLOUDINIT_TEMPLATE"
+	fi
+
+	exit $?
+fi
+
+tmp_nodefile="$CC_NODESDIR/.cc.tmp.$(uuid).${node_macaddr}"
+
+if test -e "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+then
+	node_cloudinit_checksum=$(md5sum "$CC_PXEDIR/$CC_ARPTYPE-$node_macaddr.data/cloud-init.yml" | cut -d\  -f1)
+else
+	node_cloudinit_checksum=$(md5sum "$CC_CLOUDINIT_TEMPLATE" | cut -d\  -f1)
+fi
+
+cat>"$tmp_nodefile"<<EEOOFF
+dhcp-host=$converted_mac,$node_hostname,$node_ip
+#node_ipdata=$node_ipdata
+#node_hostname=$node_hostname
+#node_coreosversion=$node_channel:$node_version
+#node_autologin=$node_autologin
+#node_usedisk=$node_usedisk
+#node_cloudinit_checksum=$node_cloudinit_checksum
+#node_vmlinuz_checksum=$(test -e "$CC_PXEDIR/../amd64-usr/$node_channel/$node_version/coreos_production_pxe.vmlinuz" && md5sum "$CC_PXEDIR/../amd64-usr/$node_channel/$node_version/coreos_production_pxe.vmlinuz" | cut -d\  -f1)
+EEOOFF
+
+test $? -eq 0 || { echo "failed to create '$tmp_nodefile' while registering node data" 1>&2; exit 11; }
+
+# if differs or not currently registered then mv
+if ! cmp "$tmp_nodefile" "$CC_NODESDIR/$node_macaddr" &>/dev/null
+then
+	validate_node_data || { /bin/rm "$tmp_nodefile"; exit 11; }
+	{ /bin/mv "$tmp_nodefile" "$CC_NODESDIR/$node_macaddr" && \
+	  node_reconfigure "$node_macaddr"; } || { echo "failed to reconfigure node" 1>&2; exit 20; }
+
+elif test $node_is_registered -eq 0 && test -n "$node_reconfigure"
+then
+	{ validate_node_data && \
+  	  node_reconfigure "$node_macaddr"; } || { echo "failed to reconfigure node" 1>&2; exit 20; }
+elif test -n "$node_validate"
+then
+	validate_node_data || exit 1
+fi
+
+/bin/rm -rf "$tmp_nodefile"
+
+if test -n "$node_showdata"
+then
+	showdata
+fi

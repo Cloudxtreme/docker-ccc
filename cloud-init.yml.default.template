@@ -1,0 +1,16 @@
+#cloud-config
+
+hostname: ${node_hostname}
+
+coreos:
+ units:
+   - name: static.network
+     content: |
+       [Match]
+       MACAddress=${node_mac}
+
+       [Network]
+       Address=${node_ipdata}
+       Gateway=${node_gateway}
+       DNS=${node_dns}
+

@@ -1,0 +1,132 @@
+#!/bin/bash
+
+sourceconfig=/etc/sysconfig/cc
+
+source $sourceconfig
+
+test -z "$CC_NODESDIR" && { echo "missing config parameter CC_NODESDIR from $sourceconfig" 1>&2; exit 1; }
+test -z "$CC_PXEDIR" && { echo "missing config parameter CC_PXEDIR from $sourceconfig" 1>&2; exit 1; }
+
+
+USAGE="usage: $0 [OPTIONS]
+Options:
+        -f                      Force a server side reconfiguration for all registered valid nodes
+	-c			Do a global cleanup, removing invalid nodes and hanging nodes data
+	-s			Prints out data about each known valid node
+	-t			Same that -s but main data only, in a single line
+				
+Each option is to be used alone, no other option or combination is accepted
+
+If no option is provided, then it will just print the list of registered valid nodes (their mac addresses)
+
+"
+
+# now set the new data passed as arguments
+while getopts "fcst" OPTION
+do
+        case $OPTION in
+             f) nodes_reconfigure="-f" ;;
+             c) nodes_cleanup=1 ;;
+             s) nodes_verbose="-s" ;;
+             t) nodes_tab=1 ;;
+	     *) echo "$USAGE" 1>&2; exit 2 ;;
+        esac
+done
+
+if test -n "$nodes_cleanup"
+then
+	test $# -eq 1 || { echo "$USAGE"; exit 2; }
+
+	# disable nodes that are not in the current server subnet or has invalid data
+	find "$CC_NODESDIR" -name "??-??-??-??-??-??" | while read c
+	do
+	  node_macaddr=${c##*/}
+          if { echo "$node_macaddr" | grep -P '^([0-9a-f]{2}-){5}[0-9a-f]{2}$' &>/dev/null; }
+          then
+                cc_node "$node_macaddr" -v 2>/dev/null || { /bin/mv "$c" "$c.disabled"; cc_node "$node_macaddr" -e; } 
+          fi
+	done
+
+	# find hanging files and folders in pxelinux.cfg for not registered nodes
+	# and remove those
+
+	find "$CC_PXEDIR" -name "??-??-??-??-??-??-??" | while read c
+	do
+	  mac=${c##*/}
+          mac=${mac#*-}
+          test -e "$CC_NODESDIR/$mac" || /bin/rm -rf "$c"
+	done
+
+	find "$CC_PXEDIR" -name "??-??-??-??-??-??-??.data" | while read c
+	do
+	  mac=${c##*/}
+          mac=${mac#*-}
+          test -e "$CC_NODESDIR/$mac" || /bin/rm -rf "$c"
+	done
+
+	# clean all tmp files
+	/bin/rm -rf "$CC_NODESDIR"/.cc.tmp.* "$CC_PXEDIR"/.cc.tmp.* "$CC_PXEDIR"/.cc.tmp.* /tmp/.cc.tmp.*
+
+	touch "$CC_DIR/reconfigure"
+
+	exit 0
+fi # cleanup end
+
+if test $# -ne 1 && test -n "$nodes_reconfigure"
+then
+	echo "$USAGE" 1>&2
+	exit 1
+fi
+
+if test $# -ne 1 && test -n "$nodes_verbose"
+then
+	echo "$USAGE" 1>&2
+	exit 1
+fi
+
+if test $# -ne 1 && test -n "$nodes_tab"
+then
+	echo "$USAGE" 1>&2
+	exit 1
+fi
+
+# printing and reconfiguring:
+cd "$CC_NODESDIR" && find . -name "??-??-??-??-??-??" | while read m
+do
+
+ node_macaddr="${m#./}"
+
+ if test -n "$nodes_tab"
+ then
+	 output=$(cc_node "$node_macaddr" -s)
+	 echo -n "$node_macaddr: $(echo "$output"|grep ^node_ipdata| cut -d= -f2)"
+	 echo -n " $(echo "$output"|grep ^node_hostname| cut -d= -f2)"
+	 echo -n " $(echo "$output"|grep ^node_coreosversion| cut -d= -f2)"
+	 if test -n "$(echo "$output"|grep '^node_autologin=true')"
+	 then
+		 echo -n " autologin"
+	 else
+		 echo -n " no-autologin"
+	 fi
+	 if test -n "$(echo "$output"|grep '^node_usedisk=true')"
+	 then
+		 echo -n " usedisk"
+	 else
+		 echo -n " no-usedisk"
+	 fi
+	 cloudinit_sum="$(echo "$output"|grep '^node_cloudinit_checksum' | cut -d= -f2 | cut -c1-6)"
+	 if test -n "$cloudinit_sum"
+	 then
+		 echo -n " cloudinit-$cloudinit_sum"
+	 else
+		 echo -n " no-cloudinit"
+	 fi
+	 echo
+ else
+	 cc_node "$node_macaddr" -V $nodes_reconfigure $nodes_verbose 2>/dev/null
+	 test -n "$nodes_verbose" && echo 
+ fi
+
+done
+
+exit 0
