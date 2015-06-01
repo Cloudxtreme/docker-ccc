@@ -1,10 +1,10 @@
 #!/bin/bash
 
-source /etc/sysconfig/cc
+source /etc/sysconfig/ccc
 
 get_coreos_signing_key() {
-    if [ ! -e "$CC_CACHEDIR"/CoreOS_Image_Signing_Key.pem ]; then
-        if wget --quiet -c -P "$CC_CACHEDIR" http://coreos.com/security/image-signing-key/CoreOS_Image_Signing_Key.pem
+    if [ ! -e "$CCC_CACHEDIR"/CoreOS_Image_Signing_Key.pem ]; then
+        if wget --quiet -c -P "$CCC_CACHEDIR" http://coreos.com/security/image-signing-key/CoreOS_Image_Signing_Key.pem
 	then
 		echo "Downloaded CoreOS signing key" 
 	else
@@ -15,7 +15,7 @@ get_coreos_signing_key() {
         echo "CoreOS signing key already downloaded" 
     fi
        
-    gpg --quiet --import "$CC_CACHEDIR"/CoreOS_Image_Signing_Key.pem &>/dev/null || { echo "Failed to import signing key"; exit 1; }
+    gpg --quiet --import "$CCC_CACHEDIR"/CoreOS_Image_Signing_Key.pem &>/dev/null || { echo "Failed to import signing key"; exit 1; }
 
     echo "Imported CoreOS signing key"
 }
@@ -23,9 +23,9 @@ get_coreos_signing_key() {
 get_coreos_images() {
 
     (
-      cd "$CC_CACHEDIR" || exit 1
+      cd "$CCC_CACHEDIR" || exit 1
 
-      for channelversion in $CC_COREOS_VERSIONS
+      for channelversion in $CCC_COREOS_VERSIONS
       do
 
 	channel=${channelversion%%:*}
@@ -39,7 +39,7 @@ get_coreos_images() {
 		continue
 	fi
 
-	if test -z "$version" && ! test "true" = "$CC_SKIP_VERIFICATION"
+	if test -z "$version" && ! test "true" = "$CCC_SKIP_VERIFICATION"
 	then
 	        version=$(wget -q -O - "http://$channel.release.core-os.net/amd64-usr/" | tr \" "\n" | grep -P '^\d{3,4}\.\d{1,2}\.\d{1,2}\/?' | tail -1)
 		version=${version%/}	
@@ -60,7 +60,7 @@ get_coreos_images() {
 		continue
 	fi
 
-        for image in $CC_COREOS_PXE_VMLINUZ $CC_COREOS_PXE_IMAGE_CPIO
+        for image in $CCC_COREOS_PXE_VMLINUZ $CCC_COREOS_PXE_IMAGE_CPIO
         do
 
           if ! test -e "$channel/$version/$image" || ! test -e "$channel/$version/$image.sig"
@@ -75,7 +75,7 @@ get_coreos_images() {
 
           fi
 
-	  if test "true" != "$CC_SKIP_VERIFICATION"     
+	  if test "true" != "$CCC_SKIP_VERIFICATION"     
 	  then
             echo "Verifying $channel/$version/$image ..."
 
@@ -99,41 +99,41 @@ get_coreos_images() {
 
 function init_files() {
 
-	echo "Recreating/checking files in '$CC_DIR'"
+	echo "Recreating/checking files in '$CCC_DIR'"
 
-	mkdir -p "$CC_DIR"
-	mkdir -p "$CC_NODESDIR"
-	mkdir -p "$CC_SSHDIR"
-	mkdir -p "$CC_TFTPDIR"
-	mkdir -p "$CC_PXEDIR"
-	mkdir -p "$CC_CACHEDIR"
+	mkdir -p "$CCC_DIR"
+	mkdir -p "$CCC_NODESDIR"
+	mkdir -p "$CCC_SSHDIR"
+	mkdir -p "$CCC_TFTPDIR"
+	mkdir -p "$CCC_PXEDIR"
+	mkdir -p "$CCC_CACHEDIR"
 
-	/bin/cp -f /usr/share/syslinux/pxelinux.0 "$CC_PXEDIR/.."
+	/bin/cp -f /usr/share/syslinux/pxelinux.0 "$CCC_PXEDIR/.."
 	
 	/bin/cp -f /etc/dnsmasq.conf.base /etc/dnsmasq.conf
-	echo "server=$CC_DNS1" >> /etc/dnsmasq.conf
-	echo "server=$CC_DNS2" >> /etc/dnsmasq.conf
-	echo "tftp-root=$CC_TFTPDIR" >> /etc/dnsmasq.conf
-	echo "conf-dir=$CC_NODESDIR" >> /etc/dnsmasq.conf
-	echo "domain=$CC_SERVERDOMAIN" >> /etc/dnsmasq.conf
-	echo "dhcp-range=$CC_SERVERSUBNET,$CC_SERVERSUBNET,0h" >> /etc/dnsmasq.conf 
-	echo "dhcp-boot=pxelinux.0,$CC_SERVERNAME,$CC_SERVERIP" >> /etc/dnsmasq.conf
+	echo "server=$CCC_DNS1" >> /etc/dnsmasq.conf
+	echo "server=$CCC_DNS2" >> /etc/dnsmasq.conf
+	echo "tftp-root=$CCC_TFTPDIR" >> /etc/dnsmasq.conf
+	echo "conf-dir=$CCC_NODESDIR" >> /etc/dnsmasq.conf
+	echo "domain=$CCC_SERVERDOMAIN" >> /etc/dnsmasq.conf
+	echo "dhcp-range=$CCC_SERVERSUBNET,$CCC_SERVERSUBNET,0h" >> /etc/dnsmasq.conf 
+	echo "dhcp-boot=pxelinux.0,$CCC_SERVERNAME,$CCC_SERVERIP" >> /etc/dnsmasq.conf
 
-	if ! test -e "$CC_SERVERKEYFILE"
+	if ! test -e "$CCC_SERVERKEYFILE"
 	then
 		echo "Creating new public/private key pair"
-		ssh-keygen -q -N '' -f "$CC_SERVERKEYFILE"
+		ssh-keygen -q -N '' -f "$CCC_SERVERKEYFILE"
 	fi
 
-	test -e "$CC_DIR/cloud-init.yml.default.template" ||
-		/bin/cp /cloud-init.yml.default.template "$CC_DIR/cloud-init.yml.default.template"
+	test -e "$CCC_DIR/cloud-init.yml.default.template" ||
+		/bin/cp /cloud-init.yml.default.template "$CCC_DIR/cloud-init.yml.default.template"
 }
 
 init_files
 
-test "true" = "$CC_SKIP_VERIFICATION" & echo "Warning: image verification and autodetection of online latest channel versions are DISABLED"
+test "true" = "$CCC_SKIP_VERIFICATION" & echo "Warning: image verification and autodetection of online latest channel versions are DISABLED"
 
-test "true" = "$CC_SKIP_VERIFICATION" || get_coreos_signing_key 
+test "true" = "$CCC_SKIP_VERIFICATION" || get_coreos_signing_key 
 
 get_coreos_images
 
@@ -165,29 +165,29 @@ else
 fi
 
 echo
-echo "Starting DHCP+PXE -- $CC_SERVERIPDATA"
-dnsmasq -k -q --log-dhcp &>>"$CC_DIR"/dnsmasq.logs &
+echo "Starting DHCP+PXE -- $CCC_SERVERIPDATA"
+dnsmasq -k -q --log-dhcp &>>"$CCC_DIR"/dnsmasq.logs &
 ret=$?
 test $ret -eq 0 || exit 1
 pid=$!
 
 echo "dnsmasq: running under pid $pid"
 
-/bin/rm -f "$CC_DIR/reconfigure"
+/bin/rm -f "$CCC_DIR/reconfigure"
 
 while test -d "/proc/$pid"
 do
-	if test -f "$CC_DIR/reconfigure"
+	if test -f "$CCC_DIR/reconfigure"
 	then
-		/bin/rm -f "$CC_DIR/reconfigure"
+		/bin/rm -f "$CCC_DIR/reconfigure"
 		echo "dnsmasq: restarting due to reconfiguration request"
 		kill "$pid" 2>/dev/null
 	 	sleep 1
 		kill -9 "$pid" 2>/dev/null
 
 		echo 
-		echo "Starting DHCP+PXE -- $CC_SERVERIPDATA"
-		dnsmasq -k -q --log-dhcp &>>"$CC_DIR"/dnsmasq.logs &
+		echo "Starting DHCP+PXE -- $CCC_SERVERIPDATA"
+		dnsmasq -k -q --log-dhcp &>>"$CCC_DIR"/dnsmasq.logs &
 		ret=$?
 		test $ret -eq 0 || exit 1
 		pid=$!

@@ -1,0 +1,61 @@
+
+if test -z "$CCC_SERVERIPDATA" || test "$CCC_SERVERIPDATA" = "/"
+then
+
+ CCC_SERVERIPDATA="" # clear in case / was received
+ CCC_DETECTED_NETWORK=$(ifconfig|grep -A 1 ^e|tail -1)
+
+ if test -n "$CCC_DETECTED_NETWORK"
+ then
+  CCC_DETECTED_SERVER_IP=$(echo $CCC_DETECTED_NETWORK | awk '{print $2}' | cut -d: -f2)
+  CCC_DETECTED_SERVER_NETMASK=$(echo $CCC_DETECTED_NETWORK | awk '{print $4}' | cut -d: -f2)
+  CCC_DETECTED_SERVER_PREFIX=$(ipcalc -p $CCC_DETECTED_SERVER_IP $CCC_DETECTED_SERVER_NETMASK | cut -d= -f2)
+  test -n "$CCC_DETECTED_SERVER_IP" || { echo "Failed to auto-detect network settings" 1>&2; exit 1; }
+  test -n "$CCC_DETECTED_SERVER_NETMASK" || { echo "Failed to auto-detect network settings" 1>&2; exit 1; }
+  test -n "$CCC_DETECTED_SERVER_PREFIX" || { echo "Failed to auto-detect network settings" 1>&2; exit 1; }
+ fi
+
+fi
+
+CCC_SERVERIPDATA=${CCC_SERVERIPDATA:-"$CCC_DETECTED_SERVER_IP/$CCC_DETECTED_SERVER_PREFIX"}
+
+CCC_SERVERNAME=${CCC_SERVERNAME:-"ccc-server"}
+CCC_SERVERDOMAIN=${CCC_SERVERDOMAIN:-"ccc.local"}
+CCC_DNS1=${CCC_DNS1:-"8.8.8.8"}
+CCC_DNS2=${CCC_DNS2:-"8.8.4.4"}
+CCC_COREOS_VERSIONS="${CCC_COREOS_VERSIONS:-"stable beta alpha"}"
+
+CCC_NODESDIR="$CCC_DIR"/nodes
+CCC_SSHDIR="$CCC_DIR"/ssh
+CCC_TFTPDIR="$CCC_DIR"/tftpboot
+CCC_PXEDIR="$CCC_TFTPDIR"/pxelinux.cfg
+CCC_CACHEDIR="$CCC_PXEDIR"/../amd64-usr
+
+CCC_SERVERKEYFILE="$CCC_SSHDIR"/id_rsa.ccc
+CCC_SERVERKEY="$(test -s "$CCC_SERVERKEYFILE.pub" && head -1 "$CCC_SERVERKEYFILE.pub")"
+
+CCC_SERVERIP=${CCC_SERVERIPDATA%/*}
+CCC_SERVERPREFIX=${CCC_SERVERIPDATA##*/}
+CCC_SERVERSUBNET=$(ipcalc -n "$CCC_SERVERIPDATA" | cut -d= -f2)
+CCC_SERVERNETMASK=$(ipcalc -m "$CCC_SERVERIPDATA" | cut -d= -f2)
+CCC_SERVERBCAST=$(ipcalc -b "$CCC_SERVERIPDATA" | cut -d= -f2)
+
+CCC_ARPTYPE=01
+
+CCC_COREOS_PXE_VMLINUZ=coreos_production_pxe.vmlinuz
+CCC_COREOS_PXE_IMAGE_CPIO=coreos_production_pxe_image.cpio.gz
+
+CCC_CLOUDINIT_TEMPLATE="$CCC_DIR/cloud-init.yml.default.template"
+
+function convert_mac() {
+	mac="$1"
+	mac=$(echo "$mac" | tr \- \:)
+	echo -n "$mac"
+}
+
+function find_latest() {
+	c=$1
+	latest=$(cd "$CCC_CACHEDIR" && ls -1 "$c" 2>/dev/null | sort -n | tail -1)
+	echo -n "$latest"
+}
+
