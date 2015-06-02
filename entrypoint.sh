@@ -107,6 +107,7 @@ function init_files() {
 	mkdir -p "$CCC_TFTPDIR"
 	mkdir -p "$CCC_PXEDIR"
 	mkdir -p "$CCC_CACHEDIR"
+	mkdir -p "$CCC_HOSTSDIR"
 
 	/bin/cp -f /usr/share/syslinux/pxelinux.0 "$CCC_PXEDIR/.."
 	
@@ -118,6 +119,7 @@ function init_files() {
 	echo "domain=$CCC_SERVERDOMAIN" >> /etc/dnsmasq.conf
 	echo "dhcp-range=$CCC_SERVERSUBNET,$CCC_SERVERSUBNET,0h" >> /etc/dnsmasq.conf 
 	echo "dhcp-boot=pxelinux.0,$CCC_SERVERNAME,$CCC_SERVERIP" >> /etc/dnsmasq.conf
+	echo "addn-hosts=$CCC_HOSTSDIR" >> /etc/dnsmasq.conf
 
 	if ! test -e "$CCC_SERVERKEYFILE"
 	then
@@ -192,6 +194,8 @@ do
 		test $ret -eq 0 || exit 1
 		pid=$!
 		echo "dnsmasq: running under pid $pid"
+	else
+		test 0 -eq "$((SECONDS % 5))" && kill -HUP "$pid" 2>/dev/null # to re-read addn-hosts files each 5seconds
 	fi
 	sleep 1
 done
