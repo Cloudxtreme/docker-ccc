@@ -179,6 +179,7 @@ echo "dnsmasq: running under pid $pid"
 
 while test -d "/proc/$pid"
 do
+	sleep 1
 	if test -f "$CCC_DIR/reconfigure"
 	then
 		/bin/rm -f "$CCC_DIR/reconfigure"
@@ -197,7 +198,6 @@ do
 	else
 		test 0 -eq "$((SECONDS % 5))" && kill -HUP "$pid" 2>/dev/null # to re-read addn-hosts files each 5seconds
 	fi
-	sleep 1
 done
 
 kill "$pid" 2>/dev/null
