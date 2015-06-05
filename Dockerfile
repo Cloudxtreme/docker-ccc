@@ -1,5 +1,6 @@
 FROM centos:6
 MAINTAINER javier.ramon@gmail.com
+ENV LC_ALL en_US.UTF-8
 
 ENV CCC_DIR /var/lib/ccc
 ENV CCC_COREOS_VERSIONS stable beta alpha
