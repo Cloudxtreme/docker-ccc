@@ -120,6 +120,7 @@ function init_files() {
 	echo "dhcp-range=$CCC_SERVERSUBNET,$CCC_SERVERSUBNET,0h" >> /etc/dnsmasq.conf 
 	echo "dhcp-boot=pxelinux.0,$CCC_SERVERNAME,$CCC_SERVERIP" >> /etc/dnsmasq.conf
 	echo "addn-hosts=$CCC_HOSTSDIR" >> /etc/dnsmasq.conf
+	echo "dhcp-option=66,\"$CCC_SERVERIP\"" >> /etc/dnsmasq.conf
 
 	if ! test -e "$CCC_SERVERKEYFILE"
 	then
