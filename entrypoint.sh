@@ -103,6 +103,8 @@ function init_files() {
 
 	mkdir -p "$CCC_DIR"
 	mkdir -p "$CCC_NODESDIR"
+	mkdir -p "$CCC_OEMDIR"
+	mkdir -p "$CCC_CLUSTERDIR"
 	mkdir -p "$CCC_SSHDIR"
 	mkdir -p "$CCC_TFTPDIR"
 	mkdir -p "$CCC_PXEDIR"
@@ -116,6 +118,7 @@ function init_files() {
 	echo "server=$CCC_DNS2" >> /etc/dnsmasq.conf
 	echo "tftp-root=$CCC_TFTPDIR" >> /etc/dnsmasq.conf
 	echo "conf-dir=$CCC_NODESDIR" >> /etc/dnsmasq.conf
+	echo "conf-dir=$CCC_CLUSTERDIR" >> /etc/dnsmasq.conf
 	echo "domain=$CCC_SERVERDOMAIN" >> /etc/dnsmasq.conf
 	echo "dhcp-range=$CCC_SERVERSUBNET,$CCC_SERVERSUBNET,0h" >> /etc/dnsmasq.conf 
 	echo "dhcp-boot=pxelinux.0,$CCC_SERVERNAME,$CCC_SERVERIP" >> /etc/dnsmasq.conf
@@ -167,27 +170,26 @@ else
 	exit 1
 fi
 
-echo
-echo "Starting DHCP+PXE -- $CCC_SERVERIPDATA"
-dnsmasq -k -q --log-dhcp &>>"$CCC_DIR"/dnsmasq.logs &
-ret=$?
-test $ret -eq 0 || exit 1
-pid=$!
+touch "$CCC_DIR/reconfigure"
 
-echo "dnsmasq: running under pid $pid"
-
-/bin/rm -f "$CCC_DIR/reconfigure"
-
-while test -d "/proc/$pid"
+while true
 do
 	sleep 1
-	if test -f "$CCC_DIR/reconfigure"
+	if test -f "$CCC_DIR/reconfigure" || { test -n "$pid" && ! test -d "/proc/$pid" ; }
 	then
 		/bin/rm -f "$CCC_DIR/reconfigure"
-		echo "dnsmasq: restarting due to reconfiguration request"
-		kill "$pid" 2>/dev/null
-	 	sleep 1
-		kill -9 "$pid" 2>/dev/null
+
+		if test -n "$pid" && test -d "/proc/$pid"
+		then
+		 echo "dnsmasq: restarting due to reconfiguration request"
+		 kill "$pid" 2>/dev/null
+	 	 sleep 1
+		 kill -9 "$pid" 2>/dev/null
+		fi
+
+		echo "Recreating clusters configuration"
+		ccc_nodes -r || exit 1
+		/bin/rm -f "$CCC_DIR/reconfigure" # ccc_nodes -r also requests reconfigure when used
 
 		echo 
 		echo "Starting DHCP+PXE -- $CCC_SERVERIPDATA"
@@ -196,11 +198,8 @@ do
 		test $ret -eq 0 || exit 1
 		pid=$!
 		echo "dnsmasq: running under pid $pid"
-	else
+	elif test -n "$pid" && test -d "/proc/$pid"
+	then
 		test 0 -eq "$((SECONDS % 5))" && kill -HUP "$pid" 2>/dev/null # to re-read addn-hosts files each 5seconds
 	fi
 done
-
-kill "$pid" 2>/dev/null
-kill -9 "$pid" 2>/dev/null
-echo "finished"

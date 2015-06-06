@@ -9,19 +9,21 @@ source "$sourceconfig"
 test -z "$CCC_NODESDIR" && { echo "missing config parameter CCC_NODESDIR from $sourceconfig" 1>&2; exit 10; }
 test -z "$CCC_PXEDIR" && { echo "missing config parameter CCC_PXEDIR from $sourceconfig" 1>&2; exit 10; }
 test -z "$CCC_CACHEDIR" && { echo "missing config parameter CCC_CACHEDIR from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_OEMDIR" && { echo "missing config parameter CCC_OEMDIR from $sourceconfig" 1>&2; exit 1; }
 test -z "$CCC_SERVERKEYFILE" && { echo "missing config parameter CCC_SERVERKEYFILE from $sourceconfig" 1>&2; exit 1; }
 test -z "$CCC_COREOS_VERSIONS" && { echo "missing config parameter CCC_COREOS_VERSIONS from $sourceconfig" 1>&2; exit 1; }
 test -z "$CCC_ARPTYPE" && { echo "missing config parameter CCC_ARPTYPE from $sourceconfig" 1>&2; exit 1; }
 test -z "$CCC_CLOUDINIT_TEMPLATE" && { echo "missing config parameter CCC_CLOUDINIT_TEMPLATE from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_SERVERDOMAIN" && { echo "missing config parameter CCC_SERVERDOMAIN from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_CLUSTERDOMAIN" && { echo "missing config parameter CCC_CLUSTERDOMAIN from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_NODES_GATEWAY" && { echo "missing config parameter CCC_NODES_GATEWAY from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_NODES_DNS" && { echo "missing config parameter CCC_NODES_DNS from $sourceconfig" 1>&2; exit 1; }
 
 test -z "$CCC_SERVERIP" && { echo "failed to extract CCC_SERVERIP from $CCC_SERVERIPDATA" 1>&2; exit 1; }
 test -z "$CCC_SERVERPREFIX" && { echo "failed to extract CCC_SERVERPREFIX from $CCC_SERVERIPDATA" 1>&2; exit 1; }
 test -z "$CCC_SERVERSUBNET" && { echo "failed to calculate CCC_SERVERSUBNET from $CCC_SERVERIPDATA" 1>&2; exit 1; }
 test -z "$CCC_SERVERNETMASK" && { echo "failed to calculate CCC_SERVERNETMASK from $CCC_SERVERIPDATA" 1>&2; exit 1; }
 test -z "$CCC_SERVERBCAST" && { echo "failed to calculate CCC_SERVERBCAST from $CCC_SERVERIPDATA" 1>&2; exit 1; }
-
-export node_dns="$CCC_SERVERIP"
-export node_gateway="$CCC_SERVERIP"
 
 USAGE="usage: $0 node_mac_addr [OPTIONS]
 
@@ -32,6 +34,7 @@ Options:
 	-i ip/prefix  		Specify the node ip address and network prefix
         -h hostname   		Specify the node hostname. Defaults to the mac address prefixed by 'coreos-'
 	-c channel:version	Specify the coreos version to use, defaults to stable:current
+	-l clustername          Specify the name of the cluster this node belongs to. Default is '-', meaning its isolated.
 	-d true|false           Specify if this node will be using a "disk" partition (when true), labeled as "CCCROOT", 
                                 for the root filesystem, or the default "tmpfs" in RAM (when false)
 	-a true|false		Specify this node requires console autologin
@@ -42,9 +45,9 @@ Options:
 	-f 			Force a server side reconfiguration for this node
 				A server side reconfiguration is done anyway if any change is detected on node data
 	-e			Deregister the node (can't be used with other options)
-	-o			Use standard input data as cloud-init.yml configuration for node (instead of the default)
+	-o			Use standard input data as cloud-config.yml configuration for node (instead of the default)
 				(can't be used with other options)
-	-O			Print the current cloud-init.yml of the node to standard output
+	-O			Print the current cloud-config.yml of the node to standard output
 				(can't be used with other options)
 	-T			Same than -O but translates the referenced variables into values
 				(can't be used with other options)
@@ -93,6 +96,11 @@ export node_hostname=coreos-$node_macaddr
 export node_coreosversion=stable:current
 export node_autologin=false
 export node_usedisk=false
+export node_cluster=-
+export node_dns="$CCC_NODES_DNS"
+export node_gateway="$CCC_NODES_GATEWAY"
+export cluster_domain="$CCC_CLUSTERDOMAIN"
+
 
 # if node exists load its current data to override defaults
 if test $node_is_registered -eq 0
@@ -106,7 +114,7 @@ fi
 shift
 
 # now set the new data passed as arguments
-while getopts "i:h:c:d:a:nevVsfroOT" OPTION
+while getopts "i:h:c:d:a:l:nevVsfroOT" OPTION
 do
 	case $OPTION in
 	     i) node_ipdata="$OPTARG" ;;
@@ -114,6 +122,7 @@ do
 	     c) node_coreosversion="$OPTARG" ;;
 	     d) node_usedisk="$OPTARG" ;;
 	     a) node_autologin="$OPTARG" ;;
+	     l) node_cluster="$OPTARG" ;;
 	     n) node_register=1 ;;
 	     e) node_deregister=1 ;;
 	     v) node_validate=1 ;;
@@ -145,7 +154,7 @@ then
 	exit $?
 fi
 
-# if there is a cloud-init config in/out request and no the only option
+# if there is a cloud-config.yml in/out request and no the only option
 if { test -n "$node_cloudinit" || test -n "$node_cloudinit_out"; } && test $# -ne 1
 then
 	echo "$USAGE" 1>&2
@@ -281,6 +290,12 @@ function validate_node_data()
         return 1
   fi
 
+  if test "-" != "$node_cluster" && ! { echo "$node_cluster" | grep -P '^[a-z][\w-]+[a-z0-9]$' &>/dev/null; }
+  then
+        echo "bad node cluster name (use a lowercase name with 3 or more chars, or a single dash to isolate): $node_cluster" 1>&2
+        return 1
+  fi
+
   test "$node_validate" = "2" && echo "$node_macaddr"
 
   return 0
@@ -299,32 +314,65 @@ function translated_file() {
   fi
 }
 
+function needs_oem_rebuild() {
+
+  previous_oem_sum=$(test -e "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/oem.md5sum" && head -1 "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/oem.md5sum" | awk '{ print $1 }')
+  current_oem_sum=$(translated_file "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml" | cat - "$CCC_PXEDIR/../amd64-usr/$node_channel/$node_version/coreos_production_pxe_image.cpio.gz" $(find "$CCC_OEMDIR" -type f) | md5sum | cut -d\  -f1)
+ 
+  #echo "current=$current_oem_sum        prev=$previous_oem_sum" 
+  test "$current_oem_sum" != "$previous_oem_sum"
+  return $?
+}
+
 function node_reconfigure() {
+    
+  tmp_file="$CCC_PXEDIR/.ccc.tmp.$CCC_ARPTYPE-$node_macaddr.$(uuid)"
   
+  echo "$node_macaddr: reconfiguring" 1>&2
+
   touch "$CCC_DIR/reconfigure"
 
-  echo "reconfiguring node..." 1>&2
+  needs_oem_rebuild
 
-  tmp_file="$CCC_PXEDIR/.ccc.tmp.$CCC_ARPTYPE-$node_macaddr.$(uuid)"
+  if test $? -eq 0
+  then
+
+    echo "$node_macaddr: rebuilding oem data" 1>&2
 
     mkdir -p "$tmp_file"
   
     if cd "$tmp_file"
     then
 	mkdir -p ./usr/share/oem
-	translated_file "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-init.yml" >"./usr/share/oem/cloud-init.yml" && \
+	find "$CCC_OEMDIR" -type f | while read f
+	do
+	 bf=""
+	 nf="${f#$CCC_OEMDIR}"
+	 nf="${nf#/}"
+	 test "$nf" != "${nf%/*}" && bf="${nf%/*}"
+	 bf="${bf#/}"
+	 #echo "f=$f  nf=$f  bf=$bf"
+	 mkdir -p "./usr/share/oem/$bf"
+	 cp -r "$f" "./usr/share/oem/$nf"
+	 chmod ugo+r ./usr/share/oem/"$nf"
+	 test "$nf" != "${nf%.sh}" && chmod ugo+x ./usr/share/oem/"$nf"
+        done
+	translated_file "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml" >"./usr/share/oem/cloud-config.yml" && \
 	cp "$CCC_PXEDIR/../amd64-usr/$node_channel/$node_version/coreos_production_pxe_image.cpio.gz" . && \
 	gzip -d coreos_production_pxe_image.cpio.gz && \
 	{ find usr | cpio -o -A -H newc -O coreos_production_pxe_image.cpio 2>/dev/null; } && \
 	/bin/rm -rf ./usr coreos_production_pxe_image.cpio.gz && \
 	gzip coreos_production_pxe_image.cpio && \
 	mkdir -p "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/" && \
-	mv coreos_production_pxe_image.cpio.gz "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/"
+	mv coreos_production_pxe_image.cpio.gz "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/" && \
+        echo -n "$current_oem_sum" > "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/oem.md5sum"
 
 	test $? -eq 0 ||  { echo "failed to create oem initrd" 1>&2; rm -rf "$tmp_file"; return 1; }
     fi
 
     /bin/rm -rf "$tmp_file"
+
+  fi
 
 cat>"$tmp_file"<<EEOOFF
 default amd64-usr/$node_channel/$node_version/coreos_production_pxe.vmlinuz
@@ -349,10 +397,10 @@ then
         test $node_is_registered -eq 0 || { echo "node is not registered" 1>&2; exit 11; }
 
         mkdir -p "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data"
-        cat > "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+        cat > "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml"
 
-	test -s "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-init.yml" || \
-		/bin/rm -f "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+	test -s "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml" || \
+		/bin/rm -f "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml"
 fi
 
 if test -n "$node_cloudinit_out"
@@ -361,10 +409,10 @@ then
 
 	if test "2" = "$node_cloudinit_out"
 	then
-		translated_file "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
-	elif test -s "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+		translated_file "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml"
+	elif test -s "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml"
 	then
-		cat "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+		cat "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml"
 	else
 		cat "$CCC_CLOUDINIT_TEMPLATE"
 	fi
@@ -372,30 +420,35 @@ then
 	exit $?
 fi
 
+if test -z "$node_showdata" || test $# -ne 1
+then
+
 tmp_nodefile="$CCC_NODESDIR/.ccc.tmp.$(uuid).${node_macaddr}"
 
-if test -e "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-init.yml"
+if test -e "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml"
 then
-	node_cloudinit_checksum=$(md5sum "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-init.yml" | cut -d\  -f1)
+	node_cloudinit_checksum=$(md5sum "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml" | cut -d\  -f1)
 else
 	node_cloudinit_checksum=$(md5sum "$CCC_CLOUDINIT_TEMPLATE" | cut -d\  -f1)
 fi
 
 cat>"$tmp_nodefile"<<EEOOFF
-dhcp-host=$converted_mac,$node_hostname,$node_ip
+dhcp-host=$converted_mac,$node_hostname,$node_ip,infinite
 #node_ipdata=$node_ipdata
 #node_hostname=$node_hostname
 #node_coreosversion=$node_channel:$node_version
 #node_autologin=$node_autologin
 #node_usedisk=$node_usedisk
+#node_cluster=$node_cluster
 #node_cloudinit_checksum=$node_cloudinit_checksum
-#node_vmlinuz_checksum=$(test -e "$CCC_PXEDIR/../amd64-usr/$node_channel/$node_version/coreos_production_pxe.vmlinuz" && md5sum "$CCC_PXEDIR/../amd64-usr/$node_channel/$node_version/coreos_production_pxe.vmlinuz" | cut -d\  -f1)
 EEOOFF
 
 test $? -eq 0 || { echo "failed to create '$tmp_nodefile' while registering node data" 1>&2; exit 11; }
 
+needs_oem_rebuild
+
 # if differs or not currently registered then mv
-if ! cmp "$tmp_nodefile" "$CCC_NODESDIR/$node_macaddr" &>/dev/null
+if test $? -eq 0 || ! cmp "$tmp_nodefile" "$CCC_NODESDIR/$node_macaddr" &>/dev/null
 then
 	validate_node_data || { /bin/rm "$tmp_nodefile"; exit 11; }
 	{ /bin/mv "$tmp_nodefile" "$CCC_NODESDIR/$node_macaddr" && \
@@ -411,6 +464,8 @@ then
 fi
 
 /bin/rm -rf "$tmp_nodefile"
+
+fi
 
 if test -n "$node_showdata"
 then

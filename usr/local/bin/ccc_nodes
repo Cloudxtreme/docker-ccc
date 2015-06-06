@@ -6,6 +6,7 @@ source $sourceconfig
 
 test -z "$CCC_NODESDIR" && { echo "missing config parameter CCC_NODESDIR from $sourceconfig" 1>&2; exit 1; }
 test -z "$CCC_PXEDIR" && { echo "missing config parameter CCC_PXEDIR from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_CLUSTERDOMAIN" && { echo "missing config parameter CCC_CLUSTERDOMAIN from $sourceconfig" 1>&2; exit 1; }
 
 
 USAGE="usage: $0 [OPTIONS]
@@ -14,6 +15,7 @@ Options:
 	-c			Do a global cleanup, removing invalid nodes and hanging nodes data
 	-s			Prints out data about each known valid node
 	-t			Same that -s but main data only, in a single line
+	-r			Reads nodes cluster data and recreate all clusters configuration
 				
 Each option is to be used alone, no other option or combination is accepted
 
@@ -22,13 +24,14 @@ If no option is provided, then it will just print the list of registered valid n
 "
 
 # now set the new data passed as arguments
-while getopts "fcst" OPTION
+while getopts "fcstr" OPTION
 do
         case $OPTION in
              f) nodes_reconfigure="-f" ;;
              c) nodes_cleanup=1 ;;
              s) nodes_verbose="-s" ;;
              t) nodes_tab=1 ;;
+             r) recreate_clusters=1 ;;
 	     *) echo "$USAGE" 1>&2; exit 2 ;;
         esac
 done
@@ -65,7 +68,7 @@ then
 	done
 
 	# clean all tmp files
-	/bin/rm -rf "$CCC_NODESDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* /tmp/.ccc.tmp.*
+	/bin/rm -rf "$CCC_NODESDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* /tmp/.ccc.tmp.* "${CCC_CLUSTERDIR%/}".tmp.*
 
 	touch "$CCC_DIR/reconfigure"
 
@@ -90,6 +93,16 @@ then
 	exit 1
 fi
 
+if test $# -ne 1 && test -n "$recreate_clusters"
+then
+	echo "$USAGE" 1>&2
+	exit 1
+elif test -n "$recreate_clusters"
+then
+	tmpclusterdir="${CCC_CLUSTERDIR%/}.tmp.$(uuid)"
+	mkdir -p "$tmpclusterdir"
+fi
+
 # printing and reconfiguring:
 cd "$CCC_NODESDIR" && find . -name "??-??-??-??-??-??" | while read m
 do
@@ -99,7 +112,7 @@ do
  if test -n "$nodes_tab"
  then
 	 output=$(ccc_node "$node_macaddr" -s)
-	 echo -n "$node_macaddr: $(echo "$output"|grep ^node_ipdata| cut -d= -f2)"
+	 echo -n "$node_macaddr $(echo "$output"|grep ^node_ipdata| cut -d= -f2)"
 	 echo -n " $(echo "$output"|grep ^node_hostname| cut -d= -f2)"
 	 echo -n " $(echo "$output"|grep ^node_coreosversion| cut -d= -f2)"
 	 if test -n "$(echo "$output"|grep '^node_autologin=true')"
@@ -121,12 +134,32 @@ do
 	 else
 		 echo -n " no-cloudinit"
 	 fi
+	 echo -n " $(echo "$output"|grep ^node_cluster| cut -d= -f2)"
 	 echo
+ elif test -n "$recreate_clusters"
+ then
+	 output=$(ccc_node "$node_macaddr" -s)
+	 node_ipdata="$(echo "$output"|grep ^node_ipdata| cut -d= -f2)"
+	 node_ip="${node_ipdata%/*}"
+	 node_hostname="$(echo "$output"|grep ^node_hostname| cut -d= -f2)"
+	 node_cluster="$(echo "$output"|grep ^node_cluster| cut -d= -f2)"
+	 if test -n "$node_cluster" && test "-" != "$node_cluster"
+	 then
+	  echo "$node_cluster.$CCC_CLUSTERDOMAIN: including node $node_ip ($node_hostname)"
+	  echo "srv-host=_etcd-server._tcp.$node_cluster.$CCC_CLUSTERDOMAIN,$node_ip,2380,0,0" >> "$tmpclusterdir/$node_cluster"	
+	 fi
  else
 	 ccc_node "$node_macaddr" -V $nodes_reconfigure $nodes_verbose 2>/dev/null
 	 test -n "$nodes_verbose" && echo 
  fi
 
 done
+
+if test -n "$recreate_clusters"
+then
+	rm -rf "${CCC_CLUSTERDIR%/}"/
+	mv "$tmpclusterdir" "${CCC_CLUSTERDIR%/}/"
+	touch "$CCC_DIR/reconfigure"
+fi
 
 exit 0
