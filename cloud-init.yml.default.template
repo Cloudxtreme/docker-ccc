@@ -11,6 +11,7 @@ coreos:
        listen-peer-urls: http://${node_ip}:2380
  fleet:
        public-ip: ${node_ip}
+       etcd-servers: http://127.0.0.1:2379
  units:
    - name: etcd2.service
      command: restart

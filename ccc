@@ -439,7 +439,7 @@ function translated_file() {
 
   if test -e "$origfile"
   then
-        cat "$origfile" | sed 's/^/#LN#/' | while read x; do eval "echo  \"${x#\#LN\#}\" | sed 's/\#LN\#//g'"; done
+        cat "$origfile" | sed 's/^/#LN#/' | sed 's/"/\"/g' | while read x; do eval "echo  \"${x#\#LN\#}\" | sed 's/\#LN\#//g'"; done
   fi
 }
 
