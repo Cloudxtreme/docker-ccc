@@ -25,7 +25,7 @@ get_coreos_images() {
     (
       cd "$CCC_CACHEDIR" || exit 1
 
-      for channelversion in $CCC_COREOS_VERSIONS
+      for channelversion in $(echo "$CCC_COREOS_VERSIONS" | sed 's/,/ /g')
       do
 
 	channel=${channelversion%%:*}

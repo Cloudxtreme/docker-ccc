@@ -20,7 +20,7 @@ Options:
 				
 Each option is to be used alone, no other option or combination is accepted
 
-If no option is provided, then it will just print the list of registered valid nodes (their mac addresses)
+If no option is provided, then it will just assume a -t was received as argument
 
 "
 
@@ -37,6 +37,12 @@ do
 	     *) echo "$USAGE" 1>&2; exit 2 ;;
         esac
 done
+
+if test "$1" = "${1#-}"
+then
+	echo "$USAGE" 1>&2
+	exit 2
+fi
 
 if test -n "$nodes_cleanup"
 then
@@ -104,6 +110,8 @@ then
 	tmpclusterdir="${CCC_CLUSTERDIR%/}.tmp.$(uuid)"
 	mkdir -p "$tmpclusterdir"
 fi
+
+test $# -eq 0 && nodes_tab=1
 
 # printing and reconfiguring:
 cd "$CCC_NODESDIR" && find . -name "??-??-??-??-??-??" | while read m
