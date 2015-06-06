@@ -18,7 +18,7 @@ function env_options() {
   grep -P '^\s*(-e)?\s*CCC_' ~/.ccc | while read o 
   do 
 	o=$(echo ${o#*-e})
-	echo -n "-e '$o' "
+	echo -n "-e $o "
   done
 
 }
