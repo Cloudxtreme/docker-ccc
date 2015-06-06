@@ -85,36 +85,43 @@ function showdata() {
 }
 
 function cleanup() {
+
+        find "$CCC_PXEDIR" -name "??-??-??-??-??-??-??" | while read c
+        do
+          /bin/rm -rf "$c"
+        done
+
+	# remove all node data (is going to be rebuild)
+        find "$CCC_PXEDIR" -name "??-??-??-??-??-??-??.data" | while read c
+        do
+          /bin/rm -rf "$c"
+        done
+
         # disable nodes that are not in the current server subnet or has invalid data
         find "$CCC_NODESDIR" -name "??-??-??-??-??-??" | while read c
         do
           node_macaddr=${c##*/}
           if { echo "$node_macaddr" | grep -P '^([0-9a-f]{2}-){5}[0-9a-f]{2}$' &>/dev/null; }
           then
-                $0 "$node_macaddr" -v 2>/dev/null || { /bin/mv "$c" "$c.disabled"; ccc_node "$node_macaddr" -e; }
+		if test -e "$c" && test -e "$c.disabled"
+		then
+			/bin/rm -f "$c.disabled"
+		fi
+
+		validation=$($0 "$node_macaddr" -v 2>&1)
+                if test $? -ne 0
+		then
+			/bin/mv "$c" "$c.disabled" && echo "$node_macaddr: disabled: $validation";
+		else
+			$0 "$node_macaddr" -F
+		fi
           fi
-        done
-
-        # find hanging files and folders in pxelinux.cfg for not registered nodes
-        # and remove those
-
-        find "$CCC_PXEDIR" -name "??-??-??-??-??-??-??" | while read c
-        do
-          mac=${c##*/}
-          mac=${mac#*-}
-          test -e "$CCC_NODESDIR/$mac" || /bin/rm -rf "$c"
-        done
-
-        find "$CCC_PXEDIR" -name "??-??-??-??-??-??-??.data" | while read c
-        do
-          mac=${c##*/}
-          mac=${mac#*-}
-          test -e "$CCC_NODESDIR/$mac" || /bin/rm -rf "$c"
         done
 
         # clean all tmp files
         /bin/rm -rf "$CCC_NODESDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* /tmp/.ccc.tmp.* "${CCC_CLUSTERDIR%/}".tmp.*
 
+	# signal external process
         touch "$CCC_DIR/reconfigure"
 }
 
@@ -450,14 +457,12 @@ function node_reconfigure() {
     
   tmp_file="$CCC_PXEDIR/.ccc.tmp.$CCC_ARPTYPE-$node_macaddr.$(uuid)"
   
-  echo "$node_macaddr: reconfiguring" 1>&2
-
   needs_oem_rebuild
 
   if test $? -eq 0 || test "2" = "$node_reconfigure"
   then
 
-    echo "$node_macaddr: rebuilding oem data" 1>&2
+    echo "$node_macaddr: reconfiguring, rebuilding oem data" 1>&2
 
     mkdir -p "$tmp_file"
   
@@ -478,10 +483,8 @@ function node_reconfigure() {
 	 test "$nf" != "${nf%.sh}" && chmod ugo+x ./usr/share/oem/"$nf"
         done
 	translated_file "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/cloud-config.yml" >"./usr/share/oem/cloud-config.yml" && \
-	cp "$CCC_PXEDIR/../amd64-usr/$node_channel/$node_version/coreos_production_pxe_image.cpio.gz" . && \
-	gzip -d coreos_production_pxe_image.cpio.gz && \
+	gunzip -c "$CCC_PXEDIR/../amd64-usr/$node_channel/$node_version/coreos_production_pxe_image.cpio.gz" >coreos_production_pxe_image.cpio && \
 	{ find usr | cpio -o -A -H newc -O coreos_production_pxe_image.cpio 2>/dev/null; } && \
-	/bin/rm -rf ./usr coreos_production_pxe_image.cpio.gz && \
 	gzip coreos_production_pxe_image.cpio && \
 	mkdir -p "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/" && \
 	mv coreos_production_pxe_image.cpio.gz "$CCC_PXEDIR/$CCC_ARPTYPE-$node_macaddr.data/" && \
@@ -492,6 +495,8 @@ function node_reconfigure() {
 
     /bin/rm -rf "$tmp_file"
 
+  else
+  	echo "$node_macaddr: reconfiguring" 1>&2
   fi
 
 cat>"$tmp_file"<<EEOOFF
@@ -539,6 +544,12 @@ then
 		cat "$CCC_CLOUDINIT_TEMPLATE"
 	fi
 
+	exit $?
+fi
+
+if test -n "$node_validate" && test $# -eq 1
+then
+	validate_node_data
 	exit $?
 fi
 

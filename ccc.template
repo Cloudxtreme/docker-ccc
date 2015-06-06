@@ -7,6 +7,10 @@ function env_options() {
   if ! test -e ~/.ccc
   then
 	cat>~/.ccc <<-EEOOFF
+        #
+	# NOTICE: Changes in this file require you to perform commands: 
+	#         "ccc restart" AND "ccc -N" for nodes reconfiguration
+        #
 	# CCC_SKIP_VERIFICATION=false 
 	# CCC_COREOS_VERSIONS=stable,beta,alpha 
 	# CCC_NODES_GATEWAY=172.16.1.1 
