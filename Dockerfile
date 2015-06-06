@@ -25,19 +25,18 @@ RUN yum install -y \
 COPY etc/sysconfig/ccc /etc/sysconfig/
 COPY etc/dnsmasq.conf /etc/dnsmasq.conf.base
 
-COPY usr/local/bin/ccc_node /usr/local/bin/
-COPY usr/local/bin/ccc_nodes /usr/local/bin/
+COPY usr/local/bin/ccc /usr/local/bin/
 
 RUN chmod a+x /usr/local/bin/*
 
 EXPOSE 53
 EXPOSE 69
 
-COPY entrypoint.sh /
+COPY ep /
 COPY cloud-init.yml.default.template /
 
 VOLUME ${CCC_DIR}
 WORKDIR ${CCC_DIR}
 
-CMD [ "/entrypoint.sh" ]
+ENTRYPOINT [ "/ep" ]
 

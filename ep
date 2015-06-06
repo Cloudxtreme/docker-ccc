@@ -143,6 +143,15 @@ function init_files() {
 		EEOOFF
 }
 
+
+if test "--" = "$1"
+then
+	init_files &>/dev/null
+	shift
+	ccc "$@"
+	exit $?
+fi
+
 init_files
 
 test "true" = "$CCC_SKIP_VERIFICATION" && echo "Warning: image verification and autodetection of online latest channel versions are DISABLED"
@@ -196,8 +205,8 @@ do
 		fi
 
 		echo "Recreating clusters configuration"
-		ccc_nodes -r || exit 1
-		/bin/rm -f "$CCC_DIR/reconfigure" # ccc_nodes -r also requests reconfigure when used
+		ccc -L || exit 1
+		/bin/rm -f "$CCC_DIR/reconfigure" # ccc -L also requests reconfigure when used
 
 		echo 
 		echo "Starting DHCP+PXE -- $CCC_SERVERIPDATA"

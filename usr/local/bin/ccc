@@ -25,9 +25,26 @@ test -z "$CCC_SERVERSUBNET" && { echo "failed to calculate CCC_SERVERSUBNET from
 test -z "$CCC_SERVERNETMASK" && { echo "failed to calculate CCC_SERVERNETMASK from $CCC_SERVERIPDATA" 1>&2; exit 1; }
 test -z "$CCC_SERVERBCAST" && { echo "failed to calculate CCC_SERVERBCAST from $CCC_SERVERIPDATA" 1>&2; exit 1; }
 
-USAGE="usage: $0 node_mac_addr [OPTIONS]
+USAGE="
+usage: ${0##*/} 
+usage: ${0##*/} GLOBAL_OPTION
+usage: ${0##*/} node_mac_addr [OPTIONS]
 
-	node_mac_addr  		Mandatory argument. Set to the coreos node MAC. Use the  format: XX-XX-XX-XX-XX-XX
+The first usage form receives no argument and its equivalent to pass the global option -L, as in the seconds usage form
+
+The second usage form receives a single global-operation option, which can be one of:
+
+	-H			Prints this usage and exits
+	-L			This option prints out a summary if each node configuration
+        -N                      Performs a global cleanup, removing invalid nodes and hanging nodes data. Also triggers a full 
+                                reconfiguration for each remaining valid nodes.
+        -R                      Forces reading nodes cluster data and recreate all clusters configuration
+				This option is for internal purposes, and normally is not required to be used
+
+The third usage form receives a mac address and an optional set of options, as explained below.
+
+	node_mac_addr  		Mandatory argument. Set to the coreos node MAC. Use the format: xx-xx-xx-xx-xx-xx
+				(lowercase letters only)
 
 Options:
 	-n 			Specify that this is a new node being registered (so, also specify all non defaults)
@@ -43,7 +60,7 @@ Options:
 	-v			Validate current node data even if no new settings are detected
 	-V			Same than -v but prints node mac address to stdin on successful validation.
 	-f 			Force a server side reconfiguration for this node
-				Notice that a server side reconfiguration is done anyway if any change is detected on node data
+				notice that a server side reconfiguration is done anyway if any change is detected on node data
 	-F			Same than -f but also forces oem data rebuild
 				Notice that a server side reconfiguration is done anyway if any change is detected on node data
 	-e			Deregister the node (can't be used with other options)
@@ -53,7 +70,7 @@ Options:
 				(can't be used with other options)
 	-T			Same than -O but translates the referenced variables into values
 				(can't be used with other options)
-	-r [command]		Execute a remote command on this node (can't be used with other options), if no command 
+	-r [command [args...]]	Execute a remote command on this node (can't be used with other options), if no command 
  				is given then it will read all commands from STDIN. 
 				WARNING: Everything after '-r' will be considered as part of the command.
 
@@ -62,6 +79,115 @@ it will exit with non-zero. If mac is not valid it will print an error message.
 	
 "
 
+function showdata() {
+	nodem=${1:-$node_macaddr}
+	test "$CCC_NODESDIR/$nodem" && grep -P '^#' "$CCC_NODESDIR/$nodem" | cut -d\# -f2-
+}
+
+function cleanup() {
+        # disable nodes that are not in the current server subnet or has invalid data
+        find "$CCC_NODESDIR" -name "??-??-??-??-??-??" | while read c
+        do
+          node_macaddr=${c##*/}
+          if { echo "$node_macaddr" | grep -P '^([0-9a-f]{2}-){5}[0-9a-f]{2}$' &>/dev/null; }
+          then
+                $0 "$node_macaddr" -v 2>/dev/null || { /bin/mv "$c" "$c.disabled"; ccc_node "$node_macaddr" -e; }
+          fi
+        done
+
+        # find hanging files and folders in pxelinux.cfg for not registered nodes
+        # and remove those
+
+        find "$CCC_PXEDIR" -name "??-??-??-??-??-??-??" | while read c
+        do
+          mac=${c##*/}
+          mac=${mac#*-}
+          test -e "$CCC_NODESDIR/$mac" || /bin/rm -rf "$c"
+        done
+
+        find "$CCC_PXEDIR" -name "??-??-??-??-??-??-??.data" | while read c
+        do
+          mac=${c##*/}
+          mac=${mac#*-}
+          test -e "$CCC_NODESDIR/$mac" || /bin/rm -rf "$c"
+        done
+
+        # clean all tmp files
+        /bin/rm -rf "$CCC_NODESDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* "$CCC_PXEDIR"/.ccc.tmp.* /tmp/.ccc.tmp.* "${CCC_CLUSTERDIR%/}".tmp.*
+
+        touch "$CCC_DIR/reconfigure"
+}
+
+function list() {
+ cd "$CCC_NODESDIR" && find . -name "??-??-??-??-??-??" | while read m
+ do
+  node_macaddr="${m#./}"
+  output=$(showdata "$node_macaddr")
+  echo -n "$node_macaddr $(echo "$output"|grep ^node_ipdata| cut -d= -f2)"
+  echo -n " $(echo "$output"|grep ^node_hostname| cut -d= -f2)"
+  echo -n " $(echo "$output"|grep ^node_coreosversion| cut -d= -f2)"
+  if test -n "$(echo "$output"|grep '^node_autologin=true')"
+  then
+          echo -n " autologin"
+  else
+          echo -n " no-autologin"
+  fi
+  if test -n "$(echo "$output"|grep '^node_usedisk=true')"
+  then
+          echo -n " usedisk"
+  else
+          echo -n " no-usedisk"
+  fi
+  cloudinit_sum="$(echo "$output"|grep '^node_cloudinit_checksum' | cut -d= -f2 | cut -c1-6)"
+  if test -n "$cloudinit_sum"
+  then
+          echo -n " cloudinit-$cloudinit_sum"
+  else
+          echo -n " no-cloudinit"
+  fi
+  echo -n " $(echo "$output"|grep ^node_cluster| cut -d= -f2)"
+  echo
+ done
+}
+
+function recluster() {
+ tmpclusterdir="${CCC_CLUSTERDIR%/}.tmp.$(uuid)"
+ mkdir -p "$tmpclusterdir"
+
+ cd "$CCC_NODESDIR" && find . -name "??-??-??-??-??-??" | while read m
+ do
+  node_macaddr="${m#./}"
+  output=$(show_data "$node_macaddr")
+  node_ipdata="$(echo "$output"|grep ^node_ipdata| cut -d= -f2)"
+  node_ip="${node_ipdata%/*}"
+  node_hostname="$(echo "$output"|grep ^node_hostname| cut -d= -f2)"
+  node_cluster="$(echo "$output"|grep ^node_cluster| cut -d= -f2)"
+  if test -n "$node_cluster" && test "-" != "$node_cluster"
+  then
+   echo "$node_cluster.$CCC_CLUSTERDOMAIN: including node $node_ip ($node_hostname)"
+   echo "srv-host=_etcd-server._tcp.$node_cluster.$CCC_CLUSTERDOMAIN,$node_ip,2380,0,0" >> "$tmpclusterdir/$node_cluster"
+  fi
+ done
+
+ rm -rf "${CCC_CLUSTERDIR%/}"/
+ mv "$tmpclusterdir" "${CCC_CLUSTERDIR%/}/"
+ touch "$CCC_DIR/reconfigure"
+}
+
+case "$1" in
+-N) cleanup; exit $? ;;
+-R) recluster; exit $? ;;
+-L) list; exit $? ;;
+??-??-??-??-??-??) ;;
+-H|*) echo "$USAGE" 1>&2; exit 2 ;;
+esac
+
+if test $# -eq 0
+then
+	list
+	exit $?
+fi
+
 export node_macaddr=$1
 export converted_mac="$(convert_mac "$node_macaddr")"
 export node_mac="$converted_mac"
@@ -69,14 +195,12 @@ export node_mac="$converted_mac"
 if test -z "$node_macaddr"
 then
 	echo "node mac address not specified" 1>&2
-	test "${0##*/}" = "ccc_node" && echo "$USAGE" 1>&2
 	exit 2 
 fi
 
 if ! { echo "$node_macaddr" | grep -P '^([0-9a-f]{2}-){5}[0-9a-f]{2}$'; } &>/dev/null
 then
         echo "node mac address is invalid or has an incorrect syntax: $node_macaddr" 1>&2
-	test "${0##*/}" = "ccc_node" && echo "$USAGE" 1>&2
         exit 2
 fi
 	
@@ -88,10 +212,6 @@ if test $# -eq 1 && test -n "$node_deregister"
 then
 	exit $node_is_registered
 fi
-
-function showdata() {
-	test "$CCC_NODESDIR/$node_macaddr" && grep -P '^#' "$CCC_NODESDIR/$node_macaddr" | cut -d\# -f2-
-}
 
 # defaults
 export node_hostname=coreos-$node_macaddr
