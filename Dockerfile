@@ -16,6 +16,7 @@ ENV CCC_SERVERIPDATA /
 RUN yum install -y \
 	dnsmasq \
 	openssh \
+	openssh-clients \
 	syslinux-nonlinux \
 	uuid \
 	wget \

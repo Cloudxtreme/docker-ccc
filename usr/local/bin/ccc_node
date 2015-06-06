@@ -187,19 +187,24 @@ then
 	exit 2
 fi
 
+export node_ipdata
+export node_ip=${node_ipdata%/*}
+export node_ipprefix=${node_ipdata##*/}
+export node_channel=${node_coreosversion%:*}
+export node_version=${node_coreosversion##*:}
+
 # if remote execution request then everything after the option is the command
 if test -n "$node_remotecmd"
 then
-	shift # to remove mac address
-	shift # to remove option
-
+	shift 
+	
 	# if no command passed as arg then read from stdin
 	if test $# -eq 0
 	then
 
 	  tmpscript=".ccc.tmp.cmd.$(uuid)"
 
-	  sshopts="-i $ccc_serverkeyfile -o StrictHostKeyChecking=no core@$node_ip"
+	  sshopts="-i $CCC_SERVERKEYFILE -o StrictHostKeyChecking=no core@$node_ip"
 
 	  { ssh $sshopts cat\>"$tmpscript" && \
 	    ssh $sshopts chmod +x "./$tmpscript" && \
@@ -211,7 +216,7 @@ then
 
 	else # use the command specified
 
-          ssh -i "$ccc_serverkeyfile" -o 'StrictHostKeyChecking=no' core@$node_ip $*
+          ssh -t -i "$CCC_SERVERKEYFILE" -o 'StrictHostKeyChecking=no' core@$node_ip "$@"
 
 	  exit $?
 
@@ -219,12 +224,6 @@ then
 	
 	exit 0
 fi
-
-export node_ipdata
-export node_ip=${node_ipdata%/*}
-export node_ipprefix=${node_ipdata##*/}
-export node_channel=${node_coreosversion%:*}
-export node_version=${node_coreosversion##*:}
 
 if test "$node_version" = "current" || test -z "$node_version" || test "$node_version" = "$node_channel"
 then
@@ -313,7 +312,7 @@ function translated_file() {
 
   if test -e "$origfile"
   then
-	cat "$origfile" | sed 's/^/#/' | while read x; do eval "echo \"${x#\#}\""; done
+        cat "$origfile" | sed 's/^/#LN#/' | while read x; do eval "echo  \"${x#\#LN\#}\" | sed 's/\#LN\#//g'"; done
   fi
 }
 
