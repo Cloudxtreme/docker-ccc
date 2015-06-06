@@ -157,7 +157,7 @@ function recluster() {
  cd "$CCC_NODESDIR" && find . -name "??-??-??-??-??-??" | while read m
  do
   node_macaddr="${m#./}"
-  output=$(show_data "$node_macaddr")
+  output=$(showdata "$node_macaddr")
   node_ipdata="$(echo "$output"|grep ^node_ipdata| cut -d= -f2)"
   node_ip="${node_ipdata%/*}"
   node_hostname="$(echo "$output"|grep ^node_hostname| cut -d= -f2)"

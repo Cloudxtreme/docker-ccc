@@ -143,6 +143,11 @@ function init_files() {
 		EEOOFF
 }
 
+if test "---" = "$1"
+then
+	cat /ccc.template
+	exit 0
+fi
 
 if test "--" = "$1"
 then
@@ -205,8 +210,8 @@ do
 		fi
 
 		echo "Recreating clusters configuration"
-		ccc -L || exit 1
-		/bin/rm -f "$CCC_DIR/reconfigure" # ccc -L also requests reconfigure when used
+		ccc -R || exit 1
+		/bin/rm -f "$CCC_DIR/reconfigure" # ccc -R also requests reconfigure when used
 
 		echo 
 		echo "Starting DHCP+PXE -- $CCC_SERVERIPDATA"

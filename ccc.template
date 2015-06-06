@@ -1,0 +1,95 @@
+#!/bin/bash
+
+ccc_volume=/root/ccc-volume/
+
+function env_options() {
+
+  if ! test -e ~/.ccc
+  then
+	cat>~/.ccc <<-EEOOFF
+	# CCC_SKIP_VERIFICATION=false 
+	# CCC_COREOS_VERSIONS=stable,beta,alpha 
+	# CCC_NODES_GATEWAY=172.16.1.1 
+	# CCC_SERVERDOMAIN=ccc.test
+	# CCC_SERVERNAME=ccc-server
+	EEOOFF
+  fi 
+
+  grep -P '^\s*(-e)?\s*CCC_' ~/.ccc | while read o 
+  do 
+	o=$(echo ${o#*-e})
+	echo -n "-e '$o' "
+  done
+
+}
+
+function stop() {
+  docker stop ccc &>/dev/null 
+  docker kill ccc &>/dev/null 
+  docker rm ccc &>/dev/null
+  if docker inspect ccc &>/dev/null
+  then
+	echo "ccc failed to stop"
+	return 1
+  else
+	echo "ccc stopped"
+	return 0
+  fi
+  return $?
+}
+
+function start() {
+  if docker run -d --name ccc --privileged=true -v $ccc_volume:/var/lib/ccc --net host $(env_options) jramon76/ccc &>/dev/null 
+  then
+	echo "ccc started" 
+	return 0
+  else
+	echo "ccc failed to start"
+	return 1
+  fi
+  return $?
+}
+
+function logs() {
+	docker logs ccc
+}
+
+function usage() {
+	cat<<-EEOOFF
+
+	usage: ${0##*/} help|start|stop|restart|logs
+
+       any other option is sent to the in-container script:
+	$(docker run --rm jramon76/ccc -- -H 2>&1)
+	EEOOFF
+}
+
+
+OPTION=$1
+
+test -z "$OPTION" && OPTION="-L"
+
+shift
+
+case "$OPTION" in
+
+ help) usage ;;
+
+ update) test -e ~/.ccc.no-pull || docker pull jramon76/ccc
+	 docker run --rm jramon76/ccc --- >~/bin/ccc; chmod 755 ~/bin/ccc ;;
+
+ start) start ;;
+
+ stop) stop ;;
+
+ restart) stop && start ;;
+
+ logs) logs ;;
+
+ -?|??-??-??-??-??-??) docker run -ti --rm -v $ccc_volume:/var/lib/ccc --net host $(env_options) jramon76/ccc -- $OPTION "$@" ;;
+
+ *) usage ;;
+
+esac
+
+exit $?
