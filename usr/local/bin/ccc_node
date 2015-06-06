@@ -43,7 +43,9 @@ Options:
 	-v			Validate current node data even if no new settings are detected
 	-V			Same than -v but prints node mac address to stdin on successful validation.
 	-f 			Force a server side reconfiguration for this node
-				A server side reconfiguration is done anyway if any change is detected on node data
+				Notice that a server side reconfiguration is done anyway if any change is detected on node data
+	-F			Same than -f but also forces oem data rebuild
+				Notice that a server side reconfiguration is done anyway if any change is detected on node data
 	-e			Deregister the node (can't be used with other options)
 	-o			Use standard input data as cloud-config.yml configuration for node (instead of the default)
 				(can't be used with other options)
@@ -114,7 +116,7 @@ fi
 shift
 
 # now set the new data passed as arguments
-while getopts "i:h:c:d:a:l:nevVsfroOT" OPTION
+while getopts "i:h:c:d:a:l:nevVsfFroOT" OPTION
 do
 	case $OPTION in
 	     i) node_ipdata="$OPTARG" ;;
@@ -129,6 +131,7 @@ do
 	     V) node_validate=2 ;;
 	     s) node_showdata=1 ;;
 	     f) node_reconfigure=1 ;;
+	     F) node_reconfigure=2 ;;
 	     r) node_remotecmd=1 ;;
 	     o) node_cloudinit=1 ;;
 	     O) node_cloudinit_out=1 ;;
@@ -330,11 +333,9 @@ function node_reconfigure() {
   
   echo "$node_macaddr: reconfiguring" 1>&2
 
-  touch "$CCC_DIR/reconfigure"
-
   needs_oem_rebuild
 
-  if test $? -eq 0
+  if test $? -eq 0 || test "2" = "$node_reconfigure"
   then
 
     echo "$node_macaddr: rebuilding oem data" 1>&2
@@ -388,6 +389,8 @@ EEOOFF
   fi
 
   /bin/rm -f "$tmp_file"
+  
+  touch "$CCC_DIR/reconfigure"
 
   return $?
 }

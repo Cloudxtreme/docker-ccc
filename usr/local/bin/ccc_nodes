@@ -12,6 +12,7 @@ test -z "$CCC_CLUSTERDOMAIN" && { echo "missing config parameter CCC_CLUSTERDOMA
 USAGE="usage: $0 [OPTIONS]
 Options:
         -f                      Force a server side reconfiguration for all registered valid nodes
+        -F                      Force a server side reconfiguration for all registered valid nodes, including oem data rebuild
 	-c			Do a global cleanup, removing invalid nodes and hanging nodes data
 	-s			Prints out data about each known valid node
 	-t			Same that -s but main data only, in a single line
@@ -24,10 +25,11 @@ If no option is provided, then it will just print the list of registered valid n
 "
 
 # now set the new data passed as arguments
-while getopts "fcstr" OPTION
+while getopts "fFcstr" OPTION
 do
         case $OPTION in
              f) nodes_reconfigure="-f" ;;
+             F) nodes_reconfigure="-F" ;;
              c) nodes_cleanup=1 ;;
              s) nodes_verbose="-s" ;;
              t) nodes_tab=1 ;;

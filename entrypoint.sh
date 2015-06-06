@@ -133,11 +133,19 @@ function init_files() {
 
 	test -e "$CCC_DIR/cloud-init.yml.default.template" ||
 		/bin/cp /cloud-init.yml.default.template "$CCC_DIR/cloud-init.yml.default.template"
+
+	test -e "$CCC_OEMDIR/custom.sh" ||
+		cat>"$CCC_OEMDIR/custom.sh" <<-EEOOFF
+		#!/bin/bash
+		
+		# add custom actions here
+
+		EEOOFF
 }
 
 init_files
 
-test "true" = "$CCC_SKIP_VERIFICATION" & echo "Warning: image verification and autodetection of online latest channel versions are DISABLED"
+test "true" = "$CCC_SKIP_VERIFICATION" && echo "Warning: image verification and autodetection of online latest channel versions are DISABLED"
 
 test "true" = "$CCC_SKIP_VERIFICATION" || get_coreos_signing_key 
 
