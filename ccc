@@ -10,6 +10,8 @@ test -z "$CCC_NODESDIR" && { echo "missing config parameter CCC_NODESDIR from $s
 test -z "$CCC_PXEDIR" && { echo "missing config parameter CCC_PXEDIR from $sourceconfig" 1>&2; exit 10; }
 test -z "$CCC_CACHEDIR" && { echo "missing config parameter CCC_CACHEDIR from $sourceconfig" 1>&2; exit 1; }
 test -z "$CCC_OEMDIR" && { echo "missing config parameter CCC_OEMDIR from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_HOSTSDIR" && { echo "missing config parameter CCC_HOSTSDIR from $sourceconfig" 1>&2; exit 1; }
+test -z "$CCC_CLUSTERDIR" && { echo "missing config parameter CCC_CLUSTERDIR from $sourceconfig" 1>&2; exit 1; }
 test -z "$CCC_SERVERKEYFILE" && { echo "missing config parameter CCC_SERVERKEYFILE from $sourceconfig" 1>&2; exit 1; }
 test -z "$CCC_COREOS_VERSIONS" && { echo "missing config parameter CCC_COREOS_VERSIONS from $sourceconfig" 1>&2; exit 1; }
 test -z "$CCC_ARPTYPE" && { echo "missing config parameter CCC_ARPTYPE from $sourceconfig" 1>&2; exit 1; }
@@ -97,6 +99,15 @@ function cleanup() {
           /bin/rm -rf "$c"
         done
 
+	# cleanup the host name mappings (is going to be regenerated)
+	find "$CCC_HOSTSDIR" -name "??-??-??-??-??-??" | while read c
+	do
+          /bin/rm -rf "$c"
+	done
+
+	# cleanup the cluster names and data (is going to be regenerated)
+	rm -rf "$CCC_CLUSTERDIR"/*
+
         # disable nodes that are not in the current server subnet or has invalid data
         find "$CCC_NODESDIR" -name "??-??-??-??-??-??" | while read c
         do
@@ -131,7 +142,7 @@ function list() {
   node_macaddr="${m#./}"
   output=$(showdata "$node_macaddr")
   echo -n "$node_macaddr $(echo "$output"|grep ^node_ipdata| cut -d= -f2)"
-  echo -n " $(echo "$output"|grep ^node_hostname| cut -d= -f2)"
+  echo -n " $(echo "$output"|grep ^node_hostname| cut -d= -f2).$CCC_SERVERDOMAIN"
   echo -n " $(echo "$output"|grep ^node_coreosversion| cut -d= -f2)"
   if test -n "$(echo "$output"|grep '^node_autologin=true')"
   then
@@ -152,7 +163,13 @@ function list() {
   else
           echo -n " no-cloudinit"
   fi
-  echo -n " $(echo "$output"|grep ^node_cluster| cut -d= -f2)"
+  cname=$(echo "$output"|grep ^node_cluster| cut -d= -f2)
+  if test "$cname" = "-"
+  then
+  	echo -n " $cname"
+  else
+  	echo -n " $cname.$CCC_CLUSTERDOMAIN"
+  fi
   echo
  done
 }
@@ -228,6 +245,7 @@ export node_usedisk=false
 export node_cluster=-
 export node_dns="$CCC_NODES_DNS"
 export node_gateway="$CCC_NODES_GATEWAY"
+export node_domain="$CCC_SERVERDOMAIN"
 export cluster_domain="$CCC_CLUSTERDOMAIN"
 
 
@@ -513,6 +531,8 @@ EEOOFF
   fi
 
   /bin/rm -f "$tmp_file"
+
+  echo "$node_ip  $node_hostname  $node_hostname.$node_domain" > "$CCC_HOSTSDIR/$node_macaddr"
   
   touch "$CCC_DIR/reconfigure"
 
@@ -573,6 +593,10 @@ dhcp-host=$converted_mac,$node_hostname,$node_ip,infinite
 #node_autologin=$node_autologin
 #node_usedisk=$node_usedisk
 #node_cluster=$node_cluster
+#node_domain=$node_domain
+#node_dns=$node_dns
+#node_gateway=$node_gateway
+#cluster_domain=$cluster_domain
 #node_cloudinit_checksum=$node_cloudinit_checksum
 EEOOFF
 
