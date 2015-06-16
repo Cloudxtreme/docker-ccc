@@ -34,7 +34,7 @@ usage: ${0##*/} node_mac_addr [OPTIONS]
 
 The first usage form receives no argument and its equivalent to pass the global option -L, as in the seconds usage form
 
-The second usage form receives a single global-operation option, which can be one of:
+The second usage form receives a *single* global-operation option, which can be one of:
 
 	-H			Prints this usage and exits
 	-L			This option prints out a summary if each node configuration
@@ -42,6 +42,10 @@ The second usage form receives a single global-operation option, which can be on
                                 reconfiguration for each remaining valid nodes.
         -R                      Forces reading nodes cluster data and recreate all clusters configuration
 				This option is for internal purposes, and normally is not required to be used
+        -C			List of known cluster names and nodes belonging to them
+        -C cluster[/member_ip] [command [args...]] 
+				Uses any member or specified member of cluster to execute the command
+				If no command is given, it defaults to execute 'etcdctl cluster-health'
 
 The third usage form receives a mac address and an optional set of options, as explained below.
 
@@ -174,6 +178,20 @@ function list() {
  done
 }
 
+function listclusters() {
+ cd "$CCC_CLUSTERDIR" && find . -type f | while read m
+ do
+	cname="${m##*/}"
+	echo -n "$cname.$CCC_CLUSTERDOMAIN"
+	grep -P "^srv-host=_etcd-server._tcp.$cname.$CCC_CLUSTERDOMAIN,\d+\.\d+\.\d+\.\d+,\d+,\d+,\d+$" "$m" | while read l
+	do
+		l="${l#*,}"
+		echo -n " ${l%%,*}"
+	done
+	echo
+ done
+}
+
 function recluster() {
  tmpclusterdir="${CCC_CLUSTERDIR%/}.tmp.$(uuid)"
  mkdir -p "$tmpclusterdir"
@@ -201,6 +219,55 @@ function recluster() {
 case "$1" in
 -N) cleanup; exit $? ;;
 -R) recluster; exit $? ;;
+-C) 
+	if test $# -eq 1
+	then
+		listclusters; 
+	else
+		shift # remove the -C option
+		cluster="$1"
+		member=${cluster#*/}
+		if test "$cluster" = "$member"
+		then
+			member=""
+		else
+			cluster=${cluster%/*} 
+		fi
+		test "$cluster" = "${cluster#*.*}" && cluster="$cluster.$CCC_CLUSTERDOMAIN"
+		cline="$(listclusters | grep -P "^$cluster\b" | head -1)"
+		if test -z "$cline"
+		then
+			echo "$cluster: cluster not found for this name" 1>&2
+			exit 2
+		fi
+		if test -z "$member"
+		then
+			# take first member
+			member=$(echo "$cline" | cut -d\  -f2)
+		elif ! { echo "$member" | grep -P '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$'; }
+		then
+			echo "$cluster: $member: member ip address invalid" 1>&2
+			exit 2
+		elif ! { echo "$cline" | grep -P "\b$member\b"; }
+		then
+			echo "$cluster: $member: member not found for this cluster" 1>&2
+			exit 2
+		fi
+
+		shift
+		if test $# -eq 0
+		then
+			commands="etcdctl cluster-health"
+		else
+			commands="$@"
+		fi
+		# execute
+		echo "# DEBUG: ssh -t -i ... -o ... core@$member $commands" 1>&2
+	        ssh -t -i "$CCC_SERVERKEYFILE" -o 'StrictHostKeyChecking=no' core@$member $commands
+		exit $? 
+	fi
+	exit $? 
+;;
 -L) list; exit $? ;;
 ??-??-??-??-??-??) ;;
 -H|*) echo "$USAGE" 1>&2; exit 2 ;;
